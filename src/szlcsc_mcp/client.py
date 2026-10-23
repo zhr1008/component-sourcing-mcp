@@ -221,6 +221,29 @@ class SZLCSCClient:
             "missing_intents": missing_intents,
         }
 
+    @staticmethod
+    def _matches_filters(
+        part: Part,
+        *,
+        package: str | None = None,
+        brand: str | None = None,
+        in_stock: bool | None = None,
+        min_price: float | None = None,
+        max_price: float | None = None,
+    ) -> bool:
+        if package and (not part.package or package.casefold() not in part.package.casefold()):
+            return False
+        if brand and (not part.brand or brand.casefold() not in part.brand.casefold()):
+            return False
+        if in_stock is not None and part.in_stock is not in_stock:
+            return False
+        price = part.small_batch_price_cny
+        if min_price is not None and (price is None or price < min_price):
+            return False
+        if max_price is not None and (price is None or price > max_price):
+            return False
+        return True
+
     @tracked
     def search(
         self,
@@ -270,20 +293,10 @@ class SZLCSCClient:
                 enriched.append(part)
             parts = enriched
 
-        if package:
-            p = package.casefold()
-            parts = [x for x in parts if x.package and p in x.package.casefold()]
-        if brand:
-            b = brand.casefold()
-            parts = [x for x in parts if x.brand and b in x.brand.casefold()]
-        if in_stock is True:
-            parts = [x for x in parts if x.in_stock is True]
-        elif in_stock is False:
-            parts = [x for x in parts if x.in_stock is False]
-        if min_price is not None:
-            parts = [x for x in parts if x.small_batch_price_cny is not None and x.small_batch_price_cny >= min_price]
-        if max_price is not None:
-            parts = [x for x in parts if x.small_batch_price_cny is not None and x.small_batch_price_cny <= max_price]
+        parts = [part for part in parts if self._matches_filters(
+            part, package=package, brand=brand, in_stock=in_stock,
+            min_price=min_price, max_price=max_price,
+        )]
 
         # Re-rank broad SZLCSC full-text results on the client side.  Exact C/MPN
         # lookups remain dominant, while explicit functional intents such as RS485
@@ -533,8 +546,12 @@ class SZLCSCClient:
             if part.lcsc_code:
                 try:
                     part = self.get_part(part.lcsc_code)
-                except SZLCSCError:
-                    pass
+                except SZLCSCError as exc:
+                    part.warnings.append(f"Parameter detail enrichment failed: {exc.code}")
+            if not self._matches_filters(
+                part, package=package, brand=brand, in_stock=in_stock, max_price=max_price
+            ):
+                continue
             report = evaluate_constraints(part, constraints)
             score = report["matched"] / max(report["total"], 1)
             evaluated.append({"part": part, "match": report, "match_score": score})

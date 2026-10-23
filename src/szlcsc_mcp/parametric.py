@@ -31,26 +31,18 @@ _PREFIXES = {
     "n": 1e-9,
     "u": 1e-6,
     "µ": 1e-6,
+    "μ": 1e-6,
     "m": 1e-3,
     "k": 1e3,
     "K": 1e3,
     "M": 1e6,
     "G": 1e9,
 }
-_UNIT_FACTORS = {
-    "v": 1.0,
-    "a": 1.0,
-    "w": 1.0,
-    "ohm": 1.0,
-    "ω": 1.0,
-    "Ω": 1.0,
-    "f": 1.0,
-    "h": 1.0,
-    "%": 1.0,
-    "ppm": 1.0,
-    "ppm/°c": 1.0,
-    "ppm/c": 1.0,
-}
+_SCALAR = re.compile(
+    r"(?:±|\+/-)?\s*(?P<number>[-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
+    r"\s*(?P<prefix>[pnumkKMGµμ]?)\s*"
+    r"(?P<unit>(?i:ppm(?:\s*/\s*(?:°?C|℃))?|V|A|W|F|H|Ω|ohms?|%))?"
+)
 
 
 @dataclass(slots=True)
@@ -62,39 +54,29 @@ class ParsedNumber:
 def _clean_unit(unit: str | None) -> str | None:
     if not unit:
         return None
-    return unit.strip().replace("℃", "°C").replace("ohms", "ohm").replace("ohms", "ohm")
+    cleaned = re.sub(r"\s+", "", unit).replace("℃", "°C").casefold()
+    return {"ω": "ohm", "ohms": "ohm", "ppm/c": "ppm/°c"}.get(cleaned, cleaned)
 
 
 def parse_number(text: Any) -> ParsedNumber | None:
     if isinstance(text, ParsedNumber):
-        return text
+        return text if math.isfinite(text.value) else None
     if isinstance(text, (int, float)) and not isinstance(text, bool):
-        return ParsedNumber(float(text), None)
+        try:
+            value = float(text)
+        except OverflowError:
+            return None
+        return ParsedNumber(value, None) if math.isfinite(value) else None
     if text is None:
         return None
     s = str(text).strip().replace(",", "")
-    # ppm must be recognized before the SI-prefix grammar, otherwise the first "p"
-    # in "ppm" would be interpreted as pico.
-    ppm = re.search(r"([-+]?\d+(?:\.\d+)?)\s*ppm(?:\s*/\s*(?:°?C|℃))?", s, re.I)
-    if ppm:
-        return ParsedNumber(float(ppm.group(1)), "ppm/°c" if "/" in ppm.group(0) else "ppm")
-    # First number + optional SI prefix + unit. Supports 3.3V, 200mA, 0.1%, 10kΩ.
-    m = re.search(r"([-+]?\d+(?:\.\d+)?)\s*([pnumkKMGµ]?)\s*(V|A|W|F|H|Ω|ohm|%)?", s, re.I)
+    # Only a complete scalar is numeric. Digits inside package names and ranges
+    # must never become evidence of an electrical or package match.
+    m = _SCALAR.fullmatch(s)
     if not m:
         return None
-    value = float(m.group(1))
-    prefix = m.group(2) or ""
-    unit = _clean_unit(m.group(3))
-    if prefix:
-        value *= _PREFIXES.get(prefix, _PREFIXES.get(prefix.lower(), 1.0))
-    if unit:
-        ul = unit.lower().replace(" ", "")
-        if ul in _UNIT_FACTORS:
-            value *= _UNIT_FACTORS[ul]
-            unit = ul
-        elif unit in _UNIT_FACTORS:
-            value *= _UNIT_FACTORS[unit]
-    return ParsedNumber(value, unit)
+    value = float(m.group("number")) * _PREFIXES.get(m.group("prefix"), 1.0)
+    return ParsedNumber(value, _clean_unit(m.group("unit"))) if math.isfinite(value) else None
 
 
 
@@ -105,17 +87,28 @@ def parse_number_range(text: Any) -> list[ParsedNumber]:
     s = str(text).strip().replace(",", "")
     # Split common distributor range notations while preserving units on each side.
     parts = re.split(r"\s*(?:~|～|至|to)\s*", s, flags=re.I)
-    if len(parts) < 2:
+    if len(parts) != 2:
         return []
     values = [parse_number(part) for part in parts[:2]]
     if any(value is None for value in values):
         return []
     left, right = values  # type: ignore[misc]
-    # If only one side contains a unit, inherit it for comparison semantics.
+    # A bare bound inherits both the prefix and unit: 1~5mV means 1mV~5mV.
+    # An explicit prefix is retained, so 1k~5kΩ never gets scaled twice.
+    def inherit(value, raw, other, other_raw):
+        match = _SCALAR.fullmatch(raw.strip())
+        other_match = _SCALAR.fullmatch(other_raw.strip())
+        scale = 1.0
+        if match and other_match and not match.group("prefix"):
+            scale = _PREFIXES.get(other_match.group("prefix"), 1.0)
+        return ParsedNumber(value.value * scale, other.unit)
+
     if left.unit is None and right.unit is not None:
-        left = ParsedNumber(left.value, right.unit)
+        left = inherit(left, parts[0], right, parts[1])
     if right.unit is None and left.unit is not None:
-        right = ParsedNumber(right.value, left.unit)
+        right = inherit(right, parts[1], left, parts[0])
+    if left.unit != right.unit or not all(math.isfinite(v.value) for v in (left, right)):
+        return []
     return [left, right]
 
 def _normalize_key(s: str) -> str:
@@ -165,21 +158,20 @@ def _numeric_match(actual: Any, expected: str, op: str) -> tuple[bool, str]:
         if au != eu:
             return False, f"unit_mismatch:{a.unit}!={e.unit}"
     av, ev = a.value, e.value
-    eps = max(abs(ev) * 1e-9, 1e-12)
     if op in ("=", "=="):
-        ok = math.isclose(av, ev, rel_tol=1e-6, abs_tol=eps)
+        ok = math.isclose(av, ev, rel_tol=1e-6, abs_tol=0)
     elif op == "!=":
-        ok = not math.isclose(av, ev, rel_tol=1e-6, abs_tol=eps)
+        ok = not math.isclose(av, ev, rel_tol=1e-6, abs_tol=0)
     elif op == "<=":
-        ok = av <= ev + eps
+        ok = av <= ev or math.isclose(av, ev, rel_tol=1e-9, abs_tol=0)
     elif op == ">=":
-        ok = av + eps >= ev
+        ok = av >= ev or math.isclose(av, ev, rel_tol=1e-9, abs_tol=0)
     elif op == "<":
         ok = av < ev
     elif op == ">":
         ok = av > ev
     elif op in ("~", "~="):
-        ok = math.isclose(av, ev, rel_tol=0.05, abs_tol=eps)
+        ok = math.isclose(av, ev, rel_tol=0.05, abs_tol=0)
     else:
         ok = False
     return ok, f"{av:g} {op} {ev:g}"
@@ -190,8 +182,10 @@ def match_constraint(part: Part, key: str, expression: str) -> dict[str, Any]:
     op, expected = _parse_constraint(expression)
     derived_from_range = None
     if key.casefold() in {"input_voltage_min", "input_voltage_max"}:
-        range_label, range_value = find_parameter(part, "input_voltage")
-        values = parse_number_range(actual) or parse_number_range(range_value)
+        range_label, range_value = label, actual
+        if actual is None:
+            range_label, range_value = find_parameter(part, "input_voltage")
+        values = parse_number_range(range_value)
         if values:
             if range_label:
                 label = range_label
@@ -201,15 +195,24 @@ def match_constraint(part: Part, key: str, expression: str) -> dict[str, Any]:
         return {"key": key, "label": label, "expected": expression, "actual": None, "matched": False, "reason": "missing"}
 
     numeric = parse_number(expected)
-    if numeric is not None and parse_number(actual) is not None:
+    if numeric is not None and key.casefold() != "package":
         matched, reason = _numeric_match(actual, expected, op)
     else:
         a = str(actual).strip().casefold()
         e = str(expected).strip().casefold()
+        contains = e in a
+        if key.casefold() == "package":
+            # A family may match a suffix separated by punctuation, but an
+            # explicit 8-pin package must not match an 80-pin package.
+            contains = re.search(r"(?<!\w)" + re.escape(e) + r"(?!\w)", a) is not None
         if op == "!=":
-            matched = e not in a
+            matched = not contains
+        elif op == "==":
+            matched = e == a
+        elif op in {"=", "~", "~="}:
+            matched = contains
         else:
-            matched = e == a or e in a
+            matched = False
         reason = "text"
     actual_out: Any = actual.value if isinstance(actual, ParsedNumber) else actual
     result = {"key": key, "label": label, "expected": expression, "actual": actual_out, "matched": matched, "reason": reason}

@@ -12,6 +12,7 @@ def raw(code="C1", kind="base"):
     return {
         "componentCode": code,
         "componentModelEn": "PART",
+        "componentSpecificationEn": "0603",
         "componentLibraryType": kind,
         "stockCount": 10,
         "componentPrices": [{"startNumber": 1, "productPrice": 0.2}],

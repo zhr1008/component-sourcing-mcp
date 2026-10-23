@@ -221,6 +221,10 @@ class JLCPCBClient:
                     continue
                 if kind != "all" and part["library_type"] != kind:
                     continue
+                if package and (
+                    not part["package"] or package.casefold() not in part["package"].casefold()
+                ):
+                    continue
                 if min_stock and (
                     part["assembly_stock"] is None or part["assembly_stock"] < min_stock
                 ):

@@ -1,0 +1,302 @@
+name: Antigravity Local Acceptance
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: antigravity-local-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    # Private-maintainer convenience only. Unregister the runner before going
+    # public: a job condition cannot secure a runner against changed PR workflows.
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.event.repository.private == true &&
+      github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, Windows, X64, antigravity]
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+          persist-credentials: true
+
+      - name: Resolve exact validation candidate
+        id: target
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $candidate = (git rev-parse HEAD).Trim()
+
+          git checkout --detach $candidate
+          if ($LASTEXITCODE -ne 0) { throw 'Unable to checkout exact validation candidate.' }
+
+          $pyproject = Get-Content pyproject.toml -Raw
+          $match = [regex]::Match($pyproject, '(?m)^version\s*=\s*"([^"]+)"')
+          if (-not $match.Success) { throw 'Unable to read project version from pyproject.toml.' }
+
+          $versionPlain = $match.Groups[1].Value
+          $version = "v$versionPlain"
+          $plan = "docs/test-plans/$version-ANTIGRAVITY.md"
+          $report = "docs/test-reports/$version-antigravity.md"
+
+          if (-not (Test-Path -LiteralPath $plan -PathType Leaf)) {
+              throw "Missing normative Antigravity test plan: $plan"
+          }
+
+          @(
+              "candidate=$candidate"
+              "version=$version"
+              "version_plain=$versionPlain"
+              "plan=$plan"
+              "report=$report"
+          ) | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+          Write-Host "Candidate: $candidate"
+          Write-Host "Version: $version"
+          Write-Host "Plan: $plan"
+          Write-Host "Report: $report"
+
+      - name: Remove stale acceptance outputs
+        shell: powershell
+        env:
+          REPORT: ${{ steps.target.outputs.report }}
+          VERSION: ${{ steps.target.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (Test-Path -LiteralPath $env:REPORT) {
+              Remove-Item -LiteralPath $env:REPORT -Force
+              Write-Host "Removed stale report: $env:REPORT"
+          }
+          $raw = Join-Path (Split-Path -Parent $env:REPORT) ".antigravity-artifacts\$($env:VERSION.TrimStart('v'))-agy-output.json"
+          if (Test-Path -LiteralPath $raw) {
+              Remove-Item -LiteralPath $raw -Force
+              Write-Host "Removed stale raw output: $raw"
+          }
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Bootstrap isolated candidate environment
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $venv = Join-Path $env:RUNNER_TEMP 'szlcsc-mcp-antigravity-venv'
+          if (Test-Path -LiteralPath $venv) {
+              Remove-Item -LiteralPath $venv -Recurse -Force
+          }
+
+          python -m venv $venv
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to create Python 3.12 validation venv.' }
+
+          $python = Join-Path $venv 'Scripts\python.exe'
+          $installed = $false
+          for ($attempt = 1; $attempt -le 3; $attempt++) {
+              Write-Host "Installing candidate dependencies (attempt $attempt/3)..."
+              & $python -m pip install --retries 8 --timeout 60 -e '.[dev,altium]'
+              if ($LASTEXITCODE -eq 0) {
+                  $installed = $true
+                  break
+              }
+              if ($attempt -lt 3) {
+                  Write-Warning "Dependency installation attempt $attempt failed; retrying in 5 seconds."
+                  Start-Sleep -Seconds 5
+              }
+          }
+
+          if (-not $installed) {
+              throw 'Failed to install candidate and dev dependencies after 3 attempts.'
+          }
+
+          "VALIDATION_PYTHON=$python" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Show validation environment
+        shell: powershell
+        run: |
+          git --version
+          & $env:VALIDATION_PYTHON --version
+          agy --version
+
+      - name: Run deterministic regression gate
+        id: basic
+        continue-on-error: true
+        shell: powershell
+        run: |
+          & $env:VALIDATION_PYTHON -m compileall -q src
+          $compileExit = $LASTEXITCODE
+          & $env:VALIDATION_PYTHON -m pytest -v
+          $pytestExit = $LASTEXITCODE
+          if ($compileExit -ne 0 -or $pytestExit -ne 0) {
+              throw "Basic regression gate failed: compileall=$compileExit pytest=$pytestExit"
+          }
+
+      - name: Run Antigravity acceptance
+        id: antigravity
+        continue-on-error: true
+        shell: powershell
+        env:
+          SZLCSC_ANTIGRAVITY_TEST_ROOT: ${{ vars.SZLCSC_ANTIGRAVITY_TEST_ROOT }}
+          SZLCSC_ANTIGRAVITY_LEGACY_LIBRARY: ${{ vars.SZLCSC_ANTIGRAVITY_LEGACY_LIBRARY }}
+        run: |
+          .\scripts\run-antigravity-validation.ps1 `
+            -Version '${{ steps.target.outputs.version }}' `
+            -Commit '${{ steps.target.outputs.candidate }}' `
+            -TestPlan '${{ steps.target.outputs.plan }}' `
+            -ReportPath '${{ steps.target.outputs.report }}'
+
+      - name: Preserve report and discard Agent mutations
+        if: always()
+        shell: powershell
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          CANDIDATE: ${{ steps.target.outputs.candidate }}
+          REPORT: ${{ steps.target.outputs.report }}
+          AGY_OUTCOME: ${{ steps.antigravity.outcome }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportTemp = Join-Path $env:RUNNER_TEMP 'antigravity-report.md'
+          $rawTemp = Join-Path $env:RUNNER_TEMP 'antigravity-output.json'
+
+          if (Test-Path -LiteralPath $env:REPORT) {
+              Copy-Item -LiteralPath $env:REPORT -Destination $reportTemp -Force
+          }
+
+          $raw = Join-Path (Split-Path -Parent $env:REPORT) ".antigravity-artifacts\$($env:VERSION.TrimStart('v'))-agy-output.json"
+          if (Test-Path -LiteralPath $raw) {
+              Copy-Item -LiteralPath $raw -Destination $rawTemp -Force
+          }
+
+          git reset --hard $env:CANDIDATE
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to reset candidate worktree.' }
+          git clean -fdx
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to clean candidate worktree.' }
+
+          if (-not (Test-Path -LiteralPath $reportTemp)) {
+              @(
+                  'Executor: Antigravity'
+                  "Version: $env:VERSION"
+                  "Commit: $env:CANDIDATE"
+                  'Overall: FAIL'
+                  'FAIL items: ["Antigravity validation infrastructure failed before a normative report was produced"]'
+                  'SKIP / NOT_RUN items: []'
+                  ''
+                  "Antigravity step outcome: $env:AGY_OUTCOME"
+              ) | Set-Content -LiteralPath $reportTemp -Encoding UTF8
+          }
+
+      - name: Parse report verdict
+        id: verdict
+        if: always()
+        shell: powershell
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          CANDIDATE: ${{ steps.target.outputs.candidate }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportTemp = Join-Path $env:RUNNER_TEMP 'antigravity-report.md'
+          $text = Get-Content -LiteralPath $reportTemp -Raw
+
+          foreach ($required in @('Executor: Antigravity', "Version: $env:VERSION", "Commit: $env:CANDIDATE", 'Overall:')) {
+              if ($text -notmatch [regex]::Escape($required)) {
+                  throw "Report missing required marker: $required"
+              }
+          }
+
+          $match = [regex]::Match($text, '(?m)^Overall:\s*(PASS|FAIL)\s*$')
+          if (-not $match.Success) { throw 'Unable to parse canonical Overall: PASS|FAIL report line.' }
+          $verdict = $match.Groups[1].Value
+          "result=$verdict" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Antigravity verdict: $verdict"
+
+      - name: Upload raw Antigravity artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: antigravity-${{ steps.target.outputs.version }}-${{ steps.target.outputs.candidate }}
+          path: |
+            ${{ runner.temp }}/antigravity-report.md
+            ${{ runner.temp }}/antigravity-output.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Commit only the report to main
+        if: always() && steps.verdict.outcome == 'success'
+        shell: powershell
+        env:
+          VERSION: ${{ steps.target.outputs.version }}
+          REPORT: ${{ steps.target.outputs.report }}
+          VERDICT: ${{ steps.verdict.outputs.result }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $reportTemp = Join-Path $env:RUNNER_TEMP 'antigravity-report.md'
+
+          git fetch origin main
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to fetch main before report publication.' }
+          git checkout -B main origin/main
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to checkout latest main for report publication.' }
+
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $env:REPORT) | Out-Null
+          Copy-Item -LiteralPath $reportTemp -Destination $env:REPORT -Force
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- $env:REPORT
+          git diff --cached --quiet
+          $diffExit = $LASTEXITCODE
+
+          if ($diffExit -eq 1) {
+              git commit -m "Record $env:VERSION Antigravity $env:VERDICT report"
+              if ($LASTEXITCODE -ne 0) { throw 'Failed to commit Antigravity report.' }
+              git push origin main
+              if ($LASTEXITCODE -ne 0) { throw 'Failed to push Antigravity report to main.' }
+          }
+          elseif ($diffExit -eq 0) {
+              Write-Host 'Report already matches main; nothing to commit.'
+          }
+          else {
+              throw "git diff --cached --quiet failed with exit code $diffExit"
+          }
+
+      - name: Promote Stable release after PASS
+        if: steps.verdict.outputs.result == 'PASS'
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.target.outputs.version }}
+          CANDIDATE: ${{ steps.target.outputs.candidate }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $headers = @{
+              Authorization = "Bearer $env:GITHUB_TOKEN"
+              Accept = 'application/vnd.github+json'
+              'X-GitHub-Api-Version' = '2022-11-28'
+          }
+          $body = @{
+              ref = 'main'
+              inputs = @{
+                  version = $env:VERSION
+                  target = $env:CANDIDATE
+                  prerelease = 'false'
+              }
+          } | ConvertTo-Json -Depth 4
+
+          $uri = "https://api.github.com/repos/$env:GITHUB_REPOSITORY/actions/workflows/release.yml/dispatches"
+          Invoke-RestMethod -Method Post -Uri $uri -Headers $headers -Body $body -ContentType 'application/json'
+          Write-Host "Stable release workflow dispatched for $env:VERSION at $env:CANDIDATE"
+
+      - name: Fail workflow when validation did not pass
+        if: always() && steps.verdict.outputs.result != 'PASS'
+        shell: powershell
+        run: |
+          throw 'Antigravity local acceptance did not PASS. See the committed report and uploaded artifacts.'

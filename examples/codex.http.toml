@@ -1,0 +1,6 @@
+# Run python -m szlcsc_mcp --transport http --port 8000 first.
+# Alternative to the stdio block, not an additional block with the same name.
+[mcp_servers.components]
+url = 'http://127.0.0.1:8000/mcp'
+startup_timeout_sec = 30
+tool_timeout_sec = 120

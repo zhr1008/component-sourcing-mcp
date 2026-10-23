@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "components": {
+      "command": "C:\\src\\component-sourcing-mcp\\.venv\\Scripts\\component-sourcing-mcp.exe",
+      "env": {
+        "SZLCSC_REQUEST_DELAY": "0.5",
+        "SZLCSC_TIMEOUT": "20",
+        "SZLCSC_RETRIES": "2",
+        "SZLCSC_EDA_REQUEST_DELAY": "0.5"
+      }
+    }
+  }
+}

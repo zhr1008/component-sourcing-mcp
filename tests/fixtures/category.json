@@ -1,0 +1,21 @@
+{
+  "productList": [
+    {
+      "id": 6034806,
+      "productSignId": "sign-tpr3333",
+      "catalogId": 123,
+      "catalogName": "电源管理",
+      "code": "C5291487",
+      "brandName": "TPR",
+      "standard": "SOT-23-3",
+      "model": "TPR3333-S3TR",
+      "stockNumber": 3210,
+      "totalStockNumber": 4500,
+      "priceList": [
+        {"startNumber": 1, "price": "1.35"},
+        {"startNumber": 10, "price": "1.10"},
+        {"startNumber": 100, "price": "0.82"}
+      ]
+    }
+  ]
+}

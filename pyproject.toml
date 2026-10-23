@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "component-sourcing-mcp"
+version = "0.7.0-rc.4"
+description = "MCP server for electronic component sourcing with SZLCSC/JLCPCB, datasheets, EasyEDA/Altium workflows and managed component libraries."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Component Sourcing MCP contributors" }]
+dependencies = [
+  "fastmcp>=4.1.1,<5",
+  "pydantic>=2.12,<3",
+  "requests>=2.32.4,<3",
+  "beautifulsoup4>=4.12",
+  "platformdirs>=4.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6", "PyYAML>=6,<7"]
+altium = ["altium-monkey>=2026.9.22,<2027"]
+
+[project.scripts]
+component-sourcing-mcp = "szlcsc_mcp.server:main"
+szlcsc-mcp = "szlcsc_mcp.server:main"
+
+[tool.setuptools]
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

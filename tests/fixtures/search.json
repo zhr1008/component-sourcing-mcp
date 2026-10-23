@@ -1,0 +1,16 @@
+{
+  "productList": [
+    {
+      "id": 6034806,
+      "productSignId": "sign-tpr3333",
+      "name": "电压基准芯片",
+      "catalogId": 123,
+      "catalogName": "电源管理",
+      "code": "C5291487",
+      "brandName": "TPR",
+      "image": "https://alimg.szlcsc.com/upload/public/product.jpg",
+      "standard": "SOT-23-3",
+      "model": "TPR3333-S3TR"
+    }
+  ]
+}

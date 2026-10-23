@@ -1,0 +1,18 @@
+{
+  "id": 6034806,
+  "productSignId": "sign-tpr3333",
+  "catalogId": 123,
+  "catalogName": "电源管理",
+  "code": "C5291487",
+  "brandName": "TPR",
+  "standard": "SOT-23-3",
+  "model": "TPR3333-S3TR",
+  "param": {
+    "输出电压": "3.3V",
+    "初始精度": "±0.15%",
+    "温漂": "20ppm/℃"
+  },
+  "annex": {
+    "pdfUrl": "https://atta.szlcsc.com/upload/public/datasheet.pdf"
+  }
+}

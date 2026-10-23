@@ -1,0 +1,57 @@
+name: Offline Python and MCP acceptance
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sourcing-core:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install default sourcing environment
+        run: |
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip check
+      - name: Confirm CAD dependencies are absent
+        run: python -c "from importlib.util import find_spec; assert all(find_spec(p) is None for p in ('altium_monkey', 'PIL', 'lxml'))"
+      - name: Protocol acceptance without Altium dependencies
+        run: python -X utf8 scripts/verify_mcp.py --all-transports
+  test:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - name: Install project and test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install -e ".[dev,altium]"
+      - name: Unit and mocked integration tests
+        run: python -X utf8 -m pytest -q
+      - name: Reachable Git history privacy guard
+        run: python -X utf8 scripts/check_publication_privacy.py
+      - name: Syntax and undefined-name checks
+        run: ruff check --isolated --select E9,F63,F7,F82 src tests scripts/check_publication_privacy.py scripts/verify_mcp.py scripts/verify_live.py
+      - name: Real protocol and transport acceptance (no external data requests)
+        run: python -X utf8 scripts/verify_mcp.py --all-transports

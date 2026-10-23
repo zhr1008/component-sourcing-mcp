@@ -1,0 +1,7 @@
+{
+  "productList": [
+    {"code":"C1001","model":"ALT-A","standard":"SOT-23-3","stockNumber":1000,"priceList":[{"startNumber":1,"price":"1.20"}]},
+    {"code":"C1002","model":"ALT-B","standard":"SOT-23-3","stockNumber":0,"priceList":[{"startNumber":1,"price":"0.90"}]},
+    {"code":"C1003","model":"ALT-C","standard":"SOT-89","stockNumber":1000,"priceList":[{"startNumber":1,"price":"0.70"}]}
+  ]
+}

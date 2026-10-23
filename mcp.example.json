@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "components": {
+      "command": "component-sourcing-mcp"
+    }
+  }
+}

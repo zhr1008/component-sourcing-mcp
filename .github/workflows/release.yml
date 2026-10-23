@@ -1,0 +1,169 @@
+name: Publish Component Sourcing MCP Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version, for example v0.6.0
+        required: true
+        type: string
+      target:
+        description: Tested Git ref/commit to release
+        required: true
+        default: main
+        type: string
+      prerelease:
+        description: Publish as a pre-release
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    # Publishing requires an explicit dispatch of the reviewed main workflow.
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Resolve release request
+        id: release
+        shell: bash
+        env:
+          DISPATCH_VERSION: ${{ inputs.version }}
+          DISPATCH_TARGET: ${{ inputs.target }}
+          DISPATCH_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          version="$DISPATCH_VERSION"
+          prerelease="$DISPATCH_PRERELEASE"
+
+          version="$(echo "$version" | xargs)"
+          if [[ ! "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid version: $version" >&2
+            exit 1
+          fi
+
+          target_sha="$(git rev-parse --verify --end-of-options "$DISPATCH_TARGET^{commit}")"
+          git merge-base --is-ancestor "$target_sha" origin/main
+
+          # Public release tags are immutable, including release candidates.
+          if git show-ref --verify --quiet "refs/tags/$version"; then
+            existing_sha="$(git rev-parse "refs/tags/$version^{commit}")"
+            if [[ "$existing_sha" != "$target_sha" ]]; then
+              echo 'This tag already identifies another commit; choose a new version.' >&2
+              exit 1
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "version_plain=${version#v}" >> "$GITHUB_OUTPUT"
+          echo "target_sha=$target_sha" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release metadata
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          VERSION_PLAIN: ${{ steps.release.outputs.version_plain }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+
+          read_report_commit() {
+            local report="$1"
+            grep -E '(^Commit:|Commit\*\*:)' "$report" \
+              | head -n 1 \
+              | sed -E 's/.*Commit(\*\*)?:[[:space:]]*`?([0-9a-fA-F]{7,40})`?.*/\2/' \
+              | tr -d '\r' \
+              | xargs
+          }
+
+          git show "$TARGET_SHA:pyproject.toml" > "$RUNNER_TEMP/target-pyproject.toml"
+          git show "$TARGET_SHA:src/szlcsc_mcp/__init__.py" > "$RUNNER_TEMP/target-init.py"
+          python - "$VERSION_PLAIN" "$RUNNER_TEMP/target-pyproject.toml" "$RUNNER_TEMP/target-init.py" <<'PY'
+          import pathlib, re, sys, tomllib
+          expected, pyproject_path, init_path = sys.argv[1:]
+          project = tomllib.loads(pathlib.Path(pyproject_path).read_text(encoding='utf-8'))
+          assert project['project']['version'] == expected, (project['project']['version'], expected)
+          init_text = pathlib.Path(init_path).read_text(encoding='utf-8')
+          match = re.search(r'__version__\s*=\s*["\']([^"\']+)', init_text)
+          assert match and match.group(1) == expected, (match.group(1) if match else None, expected)
+          PY
+          test -f "docs/releases/$VERSION.md"
+          if [[ "$PRERELEASE" != "true" ]]; then
+            report="docs/test-reports/$VERSION-antigravity.md"
+            test -f "$report"
+            grep -Eq '(^Executor:[[:space:]]*Antigravity|^-?[[:space:]]*\*\*Executor\*\*:[[:space:]]*Antigravity)' "$report"
+            grep -Eq '(^Overall:[[:space:]]*PASS|^-?[[:space:]]*\*\*Overall( Status)?\*\*:[[:space:]]*\*\*PASS\*\*)' "$report"
+            report_commit="$(read_report_commit "$report")"
+            test -n "$report_commit"
+            resolved_report_commit="$(git rev-parse "$report_commit^{commit}")"
+            if [[ "$resolved_report_commit" != "$TARGET_SHA" ]]; then
+              echo "Antigravity report commit $resolved_report_commit does not match release target $TARGET_SHA" >&2
+              exit 1
+            fi
+          fi
+
+      - name: Build release archive
+        id: archive
+        shell: bash
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          VERSION_PLAIN: ${{ steps.release.outputs.version_plain }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/component-sourcing-mcp-$VERSION.zip"
+          checksum="$archive.sha256"
+          git archive --format=zip --prefix="component-sourcing-mcp-$VERSION_PLAIN/" -o "$archive" "$TARGET_SHA"
+          sha256sum "$archive" | sed "s#  .*#  component-sourcing-mcp-$VERSION.zip#" > "$checksum"
+          echo "archive=$archive" >> "$GITHUB_OUTPUT"
+          echo "checksum=$checksum" >> "$GITHUB_OUTPUT"
+
+      - name: Create or promote GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.release.outputs.version }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+          PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          ARCHIVE: ${{ steps.archive.outputs.archive }}
+          CHECKSUM: ${{ steps.archive.outputs.checksum }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            if [[ "$PRERELEASE" == "true" ]]; then
+              gh release edit "$VERSION" --target "$TARGET_SHA" --title "Component Sourcing MCP $VERSION" --notes-file "docs/releases/$VERSION.md" --prerelease
+            else
+              gh release edit "$VERSION" --target "$TARGET_SHA" --title "Component Sourcing MCP $VERSION" --notes-file "docs/releases/$VERSION.md" --prerelease=false --latest
+            fi
+            # A retry may fill missing assets, but never replaces published bytes.
+            existing_assets="$(gh release view "$VERSION" --json assets --jq '.assets[].name')"
+            for asset in "$ARCHIVE" "$CHECKSUM"; do
+              if ! grep -Fxq "$(basename "$asset")" <<< "$existing_assets"; then
+                gh release upload "$VERSION" "$asset"
+              fi
+            done
+          else
+            args=(release create "$VERSION" "$ARCHIVE" "$CHECKSUM" --target "$TARGET_SHA" --title "Component Sourcing MCP $VERSION" --notes-file "docs/releases/$VERSION.md")
+            if [[ "$PRERELEASE" == "true" ]]; then
+              args+=(--prerelease)
+            else
+              args+=(--latest)
+            fi
+            gh "${args[@]}"
+          fi

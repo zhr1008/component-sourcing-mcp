@@ -1,0 +1,16 @@
+{
+  "code": "C2040",
+  "model": "RP2040",
+  "packageNumber": 3400,
+  "packageUnit": "圆盘",
+  "minWholeNumber": 3400,
+  "splitRatio": 1,
+  "priceList": [
+    {"startNumber": 1, "endNumber": 9, "price": 6.58},
+    {"startNumber": 10, "endNumber": 29, "price": 5.74},
+    {"startNumber": 30, "endNumber": 99, "price": 5.29},
+    {"startNumber": 100, "endNumber": 499, "price": 4.77},
+    {"startNumber": 500, "endNumber": 999, "price": 4.54},
+    {"startNumber": 1000, "endNumber": -1, "price": 4.43}
+  ]
+}

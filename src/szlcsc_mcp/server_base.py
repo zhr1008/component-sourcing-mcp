@@ -14,6 +14,7 @@ from .altium import (
     AltiumImportError,
     altium_status,
     inspect_altium_output,
+    require_altium_parser,
     run_altium_import,
     run_altium_import_batch,
     run_altium_merge,
@@ -355,6 +356,8 @@ def szlcsc_altium_import(
 ) -> str:
     """调用本机 altium-cruncher，把指定 C 编号/MPN 的 EasyEDA 数据转换为 Altium SchLib/PcbLib/3D。"""
     try:
+        if not symbol_only:
+            require_altium_parser()
         code = _resolve_c_code(identifier)
         source_json = None
         source_warning = None
@@ -402,6 +405,10 @@ def szlcsc_altium_import_batch(
     timeout: int = 240,
 ) -> str:
     """批量调用 altium-cruncher 生成 Altium 库；最多 50 个器件，逐个执行并分别报告失败。"""
+    try:
+        require_altium_parser()
+    except AltiumImportError as exc:
+        return _json({"error": exc})
     codes: list[str] = []
     resolve_errors: list[dict[str, str]] = []
     for identifier in identifiers[:50]:

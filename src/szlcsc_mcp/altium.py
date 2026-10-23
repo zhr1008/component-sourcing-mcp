@@ -12,11 +12,21 @@ from typing import Any
 
 from platformdirs import user_data_dir
 
-from .altium_links import LibraryLinkError, link_generated_libraries, write_link_report
+from .altium_links import LibraryLinkError, link_generated_libraries, load_altium_parser, write_link_report
+from .errors import SourcingError
 
 
-class AltiumImportError(RuntimeError):
-    pass
+class AltiumImportError(SourcingError):
+    def __init__(self, message: str, *, code: str = "ALTIUM_ERROR"):
+        super().__init__(message, code=code)
+
+
+def require_altium_parser() -> None:
+    """Reject a missing/broken optional parser before network or output changes."""
+    try:
+        load_altium_parser()
+    except LibraryLinkError as exc:
+        raise AltiumImportError(str(exc), code="DEPENDENCY_MISSING") from exc
 
 
 _C_CODE_RE = re.compile(r"^C\d+$", re.IGNORECASE)
@@ -73,10 +83,17 @@ def altium_status() -> dict[str, Any]:
     install_command = ("powershell -ExecutionPolicy Bypass -File scripts/install-altium-cruncher.ps1"
                        if os.name == "nt" else "uv tool install --index-url https://pypi.org/simple altium-cruncher==2026.9.7")
     probe_exe = f'"{exe or managed_cruncher_path()}"'
+    try:
+        require_altium_parser()
+        parser_ready = True
+    except AltiumImportError:
+        parser_ready = False
     result: dict[str, Any] = {
         "installed": bool(exe),
         "available": bool(exe),
         "ready": False,
+        "parser_ready": parser_ready,
+        "parser_install_hint": "From the project checkout, install .[altium] after reviewing docs/dependency-security.md",
         "status": "missing" if not exe else "checking",
         "executable": exe,
         "converter": "altium-cruncher",
@@ -121,10 +138,13 @@ def altium_status() -> dict[str, Any]:
     result["merge_available"] = bool(merge_proc is not None and merge_proc.returncode == 0)
     result["merge_help_excerpt"] = merge_help[:1000]
 
-    result["ready"] = bool(result["easyeda_import_available"] and result["merge_available"])
+    result["ready"] = bool(result["easyeda_import_available"] and result["merge_available"] and parser_ready)
     result["status"] = "ready" if result["ready"] else "partial"
     if result["ready"]:
         result["message"] = "altium-cruncher is ready for EasyEDA import and library merge."
+    elif result["easyeda_import_available"] and result["merge_available"]:
+        result["blocked_by"] = "altium_parser_not_installed"
+        result["message"] = "Converter commands are available, but component-sourcing-mcp[altium] is missing or could not be imported."
     else:
         missing = []
         if not result["easyeda_import_available"]:
@@ -294,6 +314,8 @@ def run_altium_import(
         raise AltiumImportError(f"invalid pin_designator_visibility: {pin_designator_visibility}")
     if pin_text_orientation not in _PIN_TEXT_ORIENTATION:
         raise AltiumImportError(f"invalid pin_text_orientation: {pin_text_orientation}")
+    if not symbol_only:
+        require_altium_parser()
 
     out = Path(output_root).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)

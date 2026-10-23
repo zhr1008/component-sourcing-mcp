@@ -4,6 +4,7 @@ from importlib import metadata
 from pathlib import Path
 from typing import Any
 
+from .altium import AltiumImportError, require_altium_parser
 from .ad_catalog import CATALOG_FILENAME, load_ad_catalog, search_ad_catalog
 from .ad_enrichment import (
     build_verification_queue,
@@ -44,6 +45,11 @@ def szlcsc_ad_library_status(catalog_root: str = "altium-catalog") -> str:
             verification_counts[verified] = verification_counts.get(verified, 0) + 1
             stale_assets += int(bool(row.get("catalog_stale")))
         monkey_version = _package_version("altium-monkey")
+        try:
+            require_altium_parser()
+            parser_ready = True
+        except AltiumImportError:
+            parser_ready = False
         return _json({
             "catalog_root": str(root),
             "catalog_path": str(root / CATALOG_FILENAME),
@@ -58,8 +64,8 @@ def szlcsc_ad_library_status(catalog_root: str = "altium-catalog") -> str:
             "identity_status_counts": status_counts,
             "verification_status_counts": verification_counts,
             "altium_monkey_version": monkey_version,
-            "parser_ready": monkey_version is not None,
-            "parser_install_extra": "component-sourcing-mcp[altium]" if monkey_version is None else None,
+            "parser_ready": parser_ready,
+            "parser_install_extra": "component-sourcing-mcp[altium]" if not parser_ready else None,
             "authority_policy": "Datasheet is the sole authority for final pin/package/footprint/electrical verification. SZLCSC/EasyEDA CAD is auxiliary only.",
             "symbol_policy": "existing Altium symbol graphics are preserved; SZLCSC/EasyEDA symbols are never substituted by this workflow",
         })

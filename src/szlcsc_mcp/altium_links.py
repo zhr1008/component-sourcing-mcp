@@ -14,13 +14,24 @@ class LibraryLinkError(RuntimeError):
     pass
 
 
+def load_altium_parser():
+    try:
+        from altium_monkey import AltiumPcbLib, AltiumSchLib
+    except (ImportError, OSError) as exc:
+        raise LibraryLinkError(
+            "Altium parsing requires component-sourcing-mcp[altium]; "
+            "review docs/dependency-security.md before installing the optional extra"
+        ) from exc
+    return AltiumPcbLib, AltiumSchLib
+
+
 def _pcb_models(symbol):
     return [model for model in symbol.implementations
             if str(model.model_type).casefold() == "pcblib"]
 
 
 def link_generated_libraries(schlibs: list[str], pcblibs: list[str]) -> dict:
-    from altium_monkey import AltiumPcbLib, AltiumSchLib
+    AltiumPcbLib, AltiumSchLib = load_altium_parser()
 
     if not schlibs or not pcblibs:
         raise LibraryLinkError("conversion did not produce both SchLib and PcbLib")

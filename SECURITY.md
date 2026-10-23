@@ -40,6 +40,13 @@ Ordinary bugs can use public issues with a sanitized reproduction.
 
 ## GitHub Actions and local validation
 
+GitHub-generated PR test-merge commits can carry account-level email metadata
+independent of local Git configuration. Before public PRs, enable account email
+privacy and verify generated metadata in a private rehearsal. See GitHub's
+[commit email settings](https://docs.github.com/en/account-and-profile/how-tos/email-preferences/setting-your-commit-email-address).
+The history guard detects violations after generation; it does not prevent the
+initial disclosure or purge GitHub-owned references and cached objects.
+
 Public contributions run on GitHub-hosted runners. Release publication is an
 explicit `workflow_dispatch` from `main`; published tags and assets are not
 overwritten by the workflow.

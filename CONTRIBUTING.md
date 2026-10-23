@@ -38,6 +38,15 @@ Also enable GitHub's email-privacy setting for web-created commits/merges. This
 repository starts from a reviewed source snapshot. Do not merge histories from
 private predecessor repositories or publish backup mirrors and original logs.
 
+Before opening a public PR, enable **Keep my email addresses private** in your
+GitHub account's [email settings](https://github.com/settings/emails). Local Git
+author settings do not control all GitHub-generated test-merge/web-merge
+metadata. If this privacy behavior has not been checked for your account, first
+rehearse in a private repository and inspect the generated commit metadata
+without posting the original values. CI can detect such metadata after creation;
+it cannot prevent the first public exposure. A failed privacy check must be
+contained and investigated before further public review.
+
 Describe the change, relevant checks and known limitations in the PR. Routine
 contribution checks do not constitute the full Antigravity/Altium manufacturing
 acceptance required for a stable release. That gate is defined in

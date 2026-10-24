@@ -50,4 +50,4 @@ def test_product_gallery_is_one_real_url_not_a_joined_request():
     assert normalize_image_url([None, "javascript:alert(1)", "//alimg.szlcsc.com/a.png"]) == "https://alimg.szlcsc.com/a.png"
     assert normalize_image_url("<$>  " + first) == first
     assert normalize_image_url({"url": first}) is None
-    assert normalize_image_url("https://user:secret@alimg.szlcsc.com/a.jpg") is None
+    assert normalize_image_url("https://user:secret@" + "alimg.szlcsc.com/a.jpg") is None

@@ -80,6 +80,8 @@ def test_publication_requires_manual_main_dispatch_and_private_local_runner():
     ci = workflow("tests.yml")
     assert ci["permissions"] == {"contents": "read"}
     assert ci["jobs"]["test"]["runs-on"] == "windows-latest"
+    names = [s["name"] for s in release["jobs"]["publish"]["steps"]]
+    assert names.index("Privacy guard before publishing any archive or tag") < names.index("Build release archive")
 
 
 def test_existing_release_tag_accepts_identical_commit(bash, candidate_repo):

@@ -118,6 +118,9 @@ jobs:
             fi
           fi
 
+      - name: Privacy guard before publishing any archive or tag
+        run: python -X utf8 scripts/check_publication_privacy.py
+
       - name: Build release archive
         id: archive
         shell: bash

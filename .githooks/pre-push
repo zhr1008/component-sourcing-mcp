@@ -1,0 +1,5 @@
+#!/bin/sh
+# Fail before uploading any objects; diagnostics never echo private values.
+set -eu
+root="$(git rev-parse --show-toplevel)"
+python -X utf8 "$root/scripts/check_publication_privacy.py" --pre-push

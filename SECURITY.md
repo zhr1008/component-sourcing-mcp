@@ -40,6 +40,15 @@ Ordinary bugs can use public issues with a sanitized reproduction.
 
 ## GitHub Actions and local validation
 
+Enable the repository's local pre-push guard as described in
+[CONTRIBUTING.md](CONTRIBUTING.md). It rejects credential filenames, known token
+formats, private paths and email addresses outside GitHub noreply or reserved
+example domains. It scans every commit tree, including duplicate-content files.
+Git hooks can be bypassed and are not installed automatically on fresh clones;
+the Release workflow independently checks history before publishing. These
+checks cover source history, not GitHub logs, release asset bytes or server caches;
+those surfaces require separate inspection.
+
 GitHub-generated PR test-merge commits can carry account-level email metadata
 independent of local Git configuration. Before public PRs, enable account email
 privacy and verify generated metadata in a private rehearsal. See GitHub's
@@ -50,6 +59,8 @@ initial disclosure or purge GitHub-owned references and cached objects.
 Public contributions run on GitHub-hosted runners. Release publication is an
 explicit `workflow_dispatch` from `main`; published tags and assets are not
 overwritten by the workflow.
+The public CI does not persist pip caches; install output and job logs are still
+public and must never receive local credentials or private engineering inputs.
 
 The inactive Antigravity template in `examples/maintainer-private-validation.yml`
 is for a separately secured private repository only. It is not a workflow of

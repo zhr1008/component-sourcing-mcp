@@ -26,3 +26,13 @@ eda-assets/
 outputs/
 scripts/functional-output/
 docs/test-reports/.antigravity-artifacts/
+altium-catalog/
+.schlib-backups/
+*.sqlite3-wal
+*.sqlite3-shm
+*.bundle
+*.p12
+*.pfx
+.netrc
+_netrc
+.pypirc

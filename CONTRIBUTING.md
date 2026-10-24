@@ -34,13 +34,22 @@ when publishing a redacted copy and label any redaction.
 
 Use a GitHub noreply address for commit author/committer metadata. Set it in this
 repository with `git config --local user.email '<your GitHub noreply address>'`.
+
+For a fresh clone, enable the checked-in pre-push guard with
+`git config --local core.hooksPath .githooks` (preserve any existing hook setup
+before changing it). The guard runs before Git uploads objects and checks full
+history, commit identities, email addresses, token formats and sensitive filenames.
+Keep real contacts out of source; use reserved example domains for test fixtures.
+The Release workflow also runs this guard before creating archives or tags.
+
 Also enable GitHub's email-privacy setting for web-created commits/merges. This
 repository starts from a reviewed source snapshot. Do not merge histories from
 private predecessor repositories or publish backup mirrors and original logs.
 
 Before opening a public PR, enable **Keep my email addresses private** in your
-GitHub account's [email settings](https://github.com/settings/emails). Local Git
-author settings do not control all GitHub-generated test-merge/web-merge
+GitHub account's [email settings](https://github.com/settings/emails). Also enable
+**Block command line pushes that expose my email**. Local Git author settings
+do not control all GitHub-generated test-merge/web-merge
 metadata. If this privacy behavior has not been checked for your account, first
 rehearse in a private repository and inspect the generated commit metadata
 without posting the original values. CI can detect such metadata after creation;

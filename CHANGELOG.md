@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Reject private email addresses across domains, UTF-16 sensitive content, registry tokens and credential filenames in the publication guard. Check every commit tree to catch sensitive filenames sharing a blob with harmless files; provide a local pre-push hook and run the guard before release publication.
 - Correct package and electrical constraint matching: package pin counts stay textual, engineering decimals/scientific notation and micro symbols are recognized, and tiny capacitance values no longer compare equal through an oversized absolute tolerance.
 - Preserve SI prefixes in shorthand voltage ranges and prefer explicit minimum/maximum limits over a generic range. Ambiguous multi-value strings and nonfinite scalars are not treated as numeric evidence.
 - Reapply stock, price, package and brand filters after parametric detail enrichment; expose enrichment failures in candidate warnings. JLCPCB results are also checked against the requested package.

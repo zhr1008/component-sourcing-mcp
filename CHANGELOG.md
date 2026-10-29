@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.8.0-rc.3
+
+- Add bounded requirement discovery with multilingual functional queries, family expansion, deduplicated package/pin variants, partial error reporting and explicit search coverage. Preserve exact lookup identity; a missing listing never proves market absence.
+- Inspect a stable 30-row upstream page independently of output limits and use upstream totals for pagination. Do not exclude candidates using stale stock/price before current detail verification; parametric discovery defaults to unspecified inventory.
+- Treat AEC/ISO/ASIL requirements as evidence to verify rather than mandatory MPN text; retain actual ISO1042 model anchors and the RS485/PHY relevance guard.
+- Replace legacy retail procurement with validated own-product public-page stock/MOQ and quantity-scoped prices. Separate unscoped advertised prices from quantity quotes; withhold legacy tiers when current evidence is unavailable.
+- Select the product's Datasheet attachment rather than generic site compliance PDFs; exclude recommendations and session/tracking state from cached page snapshots, and share concurrent cache misses.
+- Add usage-driven regressions, MCP schema validation and updated selection guidance.
+
 ## 0.8.0-rc.2
 
 - Invalidate stale CAD verification after changed symbol, footprint or source evidence; retry failed scans and respect explicit footprint-library identities.

@@ -572,6 +572,14 @@ def test_domestic_exact_mpn_filters_and_unfiltered_ambiguity(monkeypatch):
     assert result["complete"] and result["offers"][0]["offer"]["supplier_sku"] == "C2"
 
 
+def test_domestic_exact_mpn_can_resolve_a_match_from_the_second_page(monkeypatch):
+    first = [domestic_row(f"C{i}", "Other", "P1", mpn=f"OTHER{i}") for i in range(30)]
+    registry, _ = domestic_fixture(monkeypatch, [first, [domestic_row("C99", "Maker", "P1")], []])
+    result = registry.get("szlcsc", "ABC")
+    assert result["component"]["mpn"] == "ABC"
+    assert result["offers"][0]["supplier_sku"] == "C99"
+
+
 @pytest.mark.parametrize("full_first_page", [False, True])
 def test_domestic_incomplete_window_never_claims_unique_match(monkeypatch, full_first_page):
     first = [domestic_row("C1", "Maker A", "P1")]
@@ -580,7 +588,7 @@ def test_domestic_incomplete_window_never_claims_unique_match(monkeypatch, full_
             domestic_row(f"C{i}", "Other", "P2", f"OTHER{i}") for i in range(2, 51)
         )
     registry, _ = domestic_fixture(
-        monkeypatch, [first, [domestic_row("C99", "Maker A", "P1")]]
+        monkeypatch, [first, [domestic_row("C99", "Maker A", "P1")], [domestic_row("C100", "Other", "P2", "OTHER")]]
     )
     with pytest.raises(SourcingError) as caught:
         registry.get("szlcsc", "ABC", manufacturer="Maker A", package="P1")
@@ -715,7 +723,7 @@ def test_new_tools_work_through_mcp_and_survive_unconfigured_provider(monkeypatc
 
     async def run():
         async with Client(server.mcp) as client:
-            assert len(await client.list_tools()) == 49
+            assert len(await client.list_tools()) == 50
             providers = await client.call_tool("component_providers")
             assert not providers.is_error
             assert await client.read_resource("components://supplier-guide")

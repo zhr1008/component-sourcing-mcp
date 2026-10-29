@@ -208,16 +208,31 @@ def test_c_code_has_priority_over_an_mpn_that_looks_like_a_c_code(tmp_path):
 
 def test_exact_resolution_only_enriches_the_selected_component(tmp_path):
     client = SZLCSCClient(cache=SqliteCache(tmp_path / "cache.db"), request_delay=0)
-    client.search = Mock(
-        return_value=[
-            Part(lcsc_code="C1", mpn="MATCH", category_id=1),
-            Part(lcsc_code="C2", mpn="OTHER", category_id=2),
-        ]
-    )
-    client._category_exact = Mock(return_value=Part(lcsc_code="C1", stock=5))
-    assert client.get_part("MATCH", include_static=False).stock == 5
-    client.search.assert_called_once_with("MATCH", max_results=20, enrich=False)
-    client._category_exact.assert_called_once_with(1, "C1")
+    fetched = []
+    def get(url, **kwargs):
+        fetched.append((url, kwargs.get("params", {})))
+        if url.endswith("/phone/p/product/search"):
+            return response(payload={"result": {"productList": [
+                {"code": "C2", "model": "OTHER", "id": 2, "catalogId": 2},
+                {"code": "C1", "model": "MATCH", "id": 1, "catalogId": 1},
+            ]}})
+        if "list.szlcsc.com" in url:
+            assert kwargs["params"]["keyword"] == "C1"
+            return response(payload={"result": {"productList": [{"code": "C1", "model": "MATCH"}]}})
+        assert url == "https://item.szlcsc.com/1.html"
+        html = response()
+        html._content = ('<script id="__NEXT_DATA__">' + json.dumps({"props": {"pageProps": {"webData": {
+            "productRecord": {"productCode": "C1", "productModel": "MATCH", "productId": 1, "stockNumber": 5},
+        }}}}) + '</script>').encode()
+        return html
+    client.session.get = Mock(side_effect=get)
+    try:
+        part = client.get_part("MATCH", include_static=False)
+        assert part.lcsc_code == "C1" and part.stock == 5
+        assert sum(url.startswith("https://item.szlcsc.com/") for url, _ in fetched) == 1
+        assert all("/2.html" not in url for url, _ in fetched)
+    finally:
+        client.close()
 
 
 def test_usd_tier_cannot_become_domestic_cny_price():
@@ -333,7 +348,9 @@ def test_explicit_refresh_bypasses_snapshot_and_reports_provenance(tmp_path):
     first = client.get_part("C1", include_static=False)
     cached = client.get_part("C1", include_static=False)
     fresh = client.get_part("C1", refresh=True, include_static=False)
-    assert first.stock == cached.stock == 1 and fresh.stock == 2
+    assert first.stock is cached.stock is fresh.stock is None
+    assert first.procurement["error_code"] == "PRODUCT_PAGE_MISSING"
+    assert len(calls) == 2
     assert cached.data_freshness["cache_hits"] == 1
     assert fresh.data_freshness["refresh_requested"] is True
     assert fresh.data_freshness["cache_hits"] == 0

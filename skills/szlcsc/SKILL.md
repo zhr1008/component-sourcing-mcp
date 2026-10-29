@@ -7,7 +7,7 @@ description: Source components across SZLCSC, JLCPCB, Mouser and DigiKey with ex
 
 用户要求国内立创商城、`item.szlcsc.com`、人民币按数量报价、实时/分仓库存、Cxxxx/MPN、封装与电气参数选型、JLCPCB 基础/优选/扩展贴片库、Datasheet、EasyEDA/STEP、Altium 库，或整理已有 SchLib/PcbLib 时使用本技能。
 
-本说明适用于 Component Sourcing MCP v0.8.0-rc.2 的 49 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
+本说明适用于 Component Sourcing MCP v0.8.0-rc.3 的 50 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
 
 ## 多供应商入口
 
@@ -60,13 +60,26 @@ szlcsc_compare_parts(...)
 
 ### 功能/参数选型
 
-优先：
+需求选型先发现候选与系列/封装变体：
+
+```text
+szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10)
+```
+
+- 先拆分功能、硬条件、偏好及数量；未指定封装/预算/现货时不要自行增加这些硬过滤。
+- 默认保留未知库存与价格；多查询、中英文功能词回退、系列扩展和分页由明确预算限制。读取 `coverage.queries / query_errors / remaining_candidates / query_budget_reached`，需要时补充系列词或页数；一次空查询不能声明“没有此器件/市场无货”。
+- 覆盖不同后缀、封装与引脚数。例如同一收发器系列可能同时有 8 脚和 16 脚，不因先看到一种就漏掉另一种。
+- `exact_identity=false` 是候选或系列变体，不能当作完整请求型号。短系列名精确查询失败后用 discover，不把找到的后缀擅自绑定。
+- `requirements.status=unknown`、`constraint_match` 中 missing 是缺证据；`catalog_claim` 仅为商城声明。Q1 后缀不证明 AEC-Q100 资格，仍核对精确订货号的制造商资料。
+- 普通 `szlcsc_search` 默认保持数组响应，设置 `include_coverage=true` 返回 `{results,count,coverage}`。每页检查上游 30 条，按 `coverage.next_cursor` 的 page/result_offset 继续以取回页内其余候选；输出 max_results 不等于检索完整度。不要只缩窄一个型号再报告全部候选。
+
+对已发现系列进行电气条件比较：
 
 ```text
 szlcsc_parametric_search(...)
 ```
 
-必须检查 `constraint_match.all_matched` 以及每个参数的 `actual / expected / matched`。
+必须检查 `constraint_match.all_matched` 以及每个参数的 `actual / expected / matched`。默认不排除库存未知的候选；明确的商业过滤在当前详情补全后执行。
 
 ### 国内库存和按数量报价
 
@@ -82,6 +95,8 @@ szlcsc_get_pricing(identifier="C2040", quantity=10, refresh=true)
 - `full_pack_qty` 是整盘/整包装数量，不是 MOQ。仅显式购买下限可用于提高订购量；缺失 MOQ 保持 null。阶梯 `max_qty=null` 可表示末档无上限。
 - `refresh=true` 绕过 TTL 缓存。检查 `data_freshness` 与 `warnings`；缓存时间是来源快照时间，不是价格有效期保证。
 - 详情 Tool `szlcsc_get_part` 也支持 refresh。缺库存/价保持 null；请求失败不能用旧缓存冒充实时数据。
+- `procurement.source=public_product_page` 表示按身份核对了当前商品页，它覆盖冲突的旧移动 API 信息。商品页取不到时不保留旧价/库存冒充当前数据。
+- `advertised_unit_price_cny` 是公开展示价，未附数量范围时不能作为 MOQ/指定数量报价；此时 `quantity_price_verified=false`、阶梯为空、按数量单价/总价为 null。需要用户在商品页确认，不绕过签名接口。缓存仅保留当前商品必要字段，TTL 5 分钟。
 
 ### JLCPCB 装配库
 

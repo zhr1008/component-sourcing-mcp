@@ -2,11 +2,11 @@
 
 用于电子元器件选型、库存/阶梯价查询、资料下载和 Altium 器件库管理的 MCP Server，可接入 Codex 等 MCP 客户端。
 
-当前版本为 **v0.8.0-rc.2（预发布）**，Python 包版本为 `0.8.0rc2`。当前实现 **49 个 Tool、两项 Resource 和两项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
+当前版本为 **v0.8.0-rc.3（预发布）**，Python 包版本为 `0.8.0rc3`。当前实现 **50 个 Tool、两项 Resource 和两项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
 
 | 平台或工作流 | 当前状态 |
 |---|---|
-| 国内立创 SZLCSC | 已实现搜索、精确 C 编号/MPN、参数筛选、库存、CNY 数量报价、资料下载 |
+| 国内立创 SZLCSC | 已实现需求/系列/封装变体发现、精确 C 编号/MPN、参数筛选、当前公开库存/MOQ、CNY 报价证据、资料下载；完整阶梯价可能受上游签名接口限制 |
 | JLCPCB 装配库 | 已实现基础/优选/扩展库检索和分类；上游可能返回访问限制 |
 | EasyEDA / Altium | 已实现资料获取；Altium 扫描/写回/转换需显式安装可选依赖，见下方安全限制 |
 | 长期资料库 | 已实现分类归档、离线检索、同步预览、审计、修复、导出和迁移 |
@@ -32,7 +32,7 @@ py -3.12 -m venv .venv
 & '.\.venv\Scripts\python.exe' -X utf8 -c "from importlib.metadata import version; print(version('component-sourcing-mcp'))"
 ```
 
-版本检查应显示 `0.8.0rc2`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
+版本检查应显示 `0.8.0rc3`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
 
 ## 接入 Codex
 
@@ -66,6 +66,7 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 
 | 任务 | 主要 Tool |
 |---|---|
+| 需求/系列/变体发现 | `szlcsc_discover` |
 | 搜索/参数选型 | `szlcsc_search`、`szlcsc_parametric_search`、`szlcsc_get_part` |
 | 库存/数量报价 | `szlcsc_get_stock`、`szlcsc_get_pricing` |
 | 比较与替代 | `szlcsc_compare_parts`、`szlcsc_find_alternatives` |
@@ -75,7 +76,15 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 | 转换与长期归档 | `szlcsc_altium_import`、`szlcsc_altium_smoke_test`、`szlcsc_library_add`、`szlcsc_library_audit`、`szlcsc_library_migrate` |
 | 诊断/缓存 | `szlcsc_healthcheck`、`szlcsc_cache_status` |
 
-原有 45 个工具及调用边界见 [skills/szlcsc/SKILL.md](skills/szlcsc/SKILL.md)，新增 4 个统一工具见 [供应商指南](docs/supplier-setup.md)。Resource 包含 `szlcsc://sourcing-guide`、`components://supplier-guide`；Prompt 包含 `select_domestic_component`、`compare_supplier_offers`。
+原有 45 个工具及需求发现工具的调用规则见 [skills/szlcsc/SKILL.md](skills/szlcsc/SKILL.md)，4 个统一工具见 [供应商指南](docs/supplier-setup.md)。Resource 包含 `szlcsc://sourcing-guide`、`components://supplier-guide`；Prompt 包含 `select_domestic_component`、`compare_supplier_offers`。
+
+按需求选型从 `szlcsc_discover` 开始。它组合短功能词与中英文查询、在预算内翻页、从返回型号扩展系列，优先覆盖不同封装/引脚数，再补全候选详情。可用 `family_queries` 显式补充制造商系列；不要提前把未知库存、未知价或未指定的封装当作排除条件。
+
+```text
+szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10)
+```
+
+读取每个候选的 `found_by`、`exact_identity`、`requirements`、`constraint_match`，以及 `coverage.query_errors / remaining_candidates / query_budget_reached`。`complete=false` 是明确的检索边界，空结果不能证明市场不存在。资格认证保持 unknown，Q1 后缀或商城描述不代替制造商证据。普通 `szlcsc_search` 默认保持数组响应；设置 `include_coverage=true` 获取 `{results,count,coverage}`，按 `coverage.next_cursor` 的 `page/result_offset` 继续，避免跳过同一页剩余候选。每页读取上游 30 条，`max_results` 是输出上限，不能据此判断已搜尽。
 
 ```text
 szlcsc_get_part(identifier="C2040", refresh=true)
@@ -84,6 +93,8 @@ szlcsc_get_pricing(identifier="C2040", quantity=10, refresh=true)
 ```
 
 国内报价使用 CNY，明确 MOQ、订购倍数、数量对应的价格阶梯；JLCPCB 装配库存与国内零售库存分别标识。缺失数据保持 null，`data_freshness` 记录缓存/时间信息。库存与报价默认显式刷新；上游失败不静默替换为过期采购数据。
+
+国内采购信息以校验过身份的当前公开商品页覆盖旧移动接口。`procurement` 记录来源、旧接口冲突及报价范围；公开页面只提供展示价时，`advertised_unit_price_cny` 保留该值，`unit_price_cny / line_total_cny` 和无证据的阶梯保持 null/空。展示价没有数量区间时不能套用到 MOQ。服务不复现受保护的 WASM 签名来取得完整阶梯；需要在商品页确认实际数量的报价。商品页快照缓存 5 分钟，`refresh=true` 绕过缓存；只缓存当前商品的必要字段，排除推荐、追踪和会话数据。
 
 错误使用 MCP `isError=true` 和结构化 `error`，包含 `code`、`message`、`retryable` 等字段。部分成功的批量结果还需检查 `complete` 和子项状态。服务不绕过验证码、登录、签名或访问控制。
 
@@ -124,7 +135,7 @@ Datasheet 是 pin/package/footprint/electrical 最终判断依据。自动 smoke
 
 公共 CI 使用 GitHub-hosted runner，并检查完整可达历史的隐私规则。不要提交真实凭据、私人目录、原始日志或用户库。贡献与漏洞报告见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [SECURITY.md](SECURITY.md)。
 
-本版修复范围见 [全面检查记录](docs/audits/comprehensive-2026-10-29.md)，验证见 [rc.2 记录](docs/test-reports/v0.8.0-rc.2-automated.md)。多供应商初版和原始公开快照的验证分别保留在 [rc.1 记录](docs/test-reports/v0.8.0-rc.1-automated.md)和 [rc.4 记录](docs/test-reports/v0.7.0-rc.4-automated.md)。未提供凭据或上游受限的调用不计为授权联网成功。
+本版修复范围见 [实际选型问题记录](docs/audits/selection-recall-2026-10-29.md)，验证见 [rc.3 记录](docs/test-reports/v0.8.0-rc.3-automated.md)。先前的 [全面检查记录](docs/audits/comprehensive-2026-10-29.md)、[rc.2](docs/test-reports/v0.8.0-rc.2-automated.md)、[rc.1](docs/test-reports/v0.8.0-rc.1-automated.md)和 [公开快照](docs/test-reports/v0.7.0-rc.4-automated.md)验证均保留。未提供凭据或上游受限的调用不计为授权联网成功。
 
 ## 许可与数据来源
 

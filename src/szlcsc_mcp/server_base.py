@@ -108,7 +108,7 @@ def _part_payload(part: Part) -> dict[str, Any]:
         "stock_available": part.in_stock is not None,
         "parameters_available": bool(part.parameters),
         "datasheet_available": bool(part.datasheet_url),
-        "price_basis": "smallest_quantity_domestic_CNY_tier" if part.small_batch_price_cny is not None else None,
+        "price_basis": part.procurement.get("price_basis") or ("smallest_quantity_domestic_CNY_tier" if part.small_batch_price_cny is not None else None),
         "missing_means_unknown_not_zero": True,
     }
     return payload
@@ -126,10 +126,14 @@ def szlcsc_search(
     max_price: Money | None = None,
     sort: int = 0,
     page: Page = 1,
+    result_offset: Annotated[int, Field(strict=True, ge=0, le=50, description="Window cursor from coverage.next_cursor; use with its page")] = 0,
+    include_coverage: bool = False,
 ) -> str:
     """搜索国内立创 SZLCSC 的型号/功能关键词；支持封装、品牌、分类、库存及小批量 CNY 单价和分页。
 
-    精确 C 编号/MPN 详情请用 szlcsc_get_part；电气条件用 szlcsc_parametric_search。
+    按需求选型、系列/封装变体发现优先用 szlcsc_discover；本工具每页检查 30 条后返回 max_results 条，
+    include_coverage=true 返回 {results,count,coverage}，按 coverage.next_cursor 继续，避免跳过页内剩余候选。
+    默认保持数组响应兼容。空结果不能当作市场无货。精确详情请用 szlcsc_get_part；电气条件用 szlcsc_parametric_search。
     检查 search_relevance.hard_pass。基础/扩展贴片库请用 szlcsc_jlcpcb_search，库存池不同。
     """
     try:
@@ -145,14 +149,14 @@ def szlcsc_search(
             sort=sort,
             enrich=True,
             page=page,
+            result_offset=result_offset,
         )
-        return _json(
-            [
+        rows = [
                 _part_payload(part)
                 | {"search_relevance": client.search_relevance(part, query)}
                 for part in parts
             ]
-        )
+        return _json({"results": rows, "count": len(rows), "coverage": getattr(parts, "coverage", {"complete": False})} if include_coverage else rows)
     except SZLCSCError as exc:
         return _json(error_payload(exc) | {"source": "szlcsc.com"})
 
@@ -165,10 +169,13 @@ def szlcsc_parametric_search(
     fetch_pool: ResultLimit = 20,
     package: str | None = None,
     brand: str | None = None,
-    in_stock: bool | None = True,
+    in_stock: bool | None = None,
     max_price: Money | None = None,
 ) -> str:
-    """参数化选型。constraints 示例：{"output_voltage":"=3.3V","accuracy":"<=0.2%","tempco":"<=20ppm/°C"}。"""
+    """参数化选型。默认保留未知库存候选；采购过滤在当前详情补全后执行。
+    constraints 示例：{"output_voltage":"=3.3V","accuracy":"<=0.2%","tempco":"<=20ppm/°C"}。
+    missing 表示证据缺失，不能当作已证明不符合。跨关键词/系列探索请用 szlcsc_discover。
+    """
     try:
         rows = client.parametric_search(
             query,
@@ -195,8 +202,40 @@ def szlcsc_parametric_search(
 
 
 @mcp.tool(output_schema=None)
+def szlcsc_discover(
+    query: Query,
+    max_results: ResultLimit = 10,
+    family_queries: Annotated[list[Query], Field(max_length=4, description="Optional manufacturer family queries to explore ordering/package variants")] | None = None,
+    constraints: Constraints | None = None,
+    package: str | None = None,
+    brand: str | None = None,
+    in_stock: bool | None = None,
+    max_price: Money | None = None,
+    max_queries: Annotated[int, Field(strict=True, ge=1, le=8)] = 6,
+    pages_per_query: Annotated[int, Field(strict=True, ge=1, le=3)] = 2,
+    refresh: bool = False,
+) -> str:
+    """按功能需求选型与发现系列/封装/引脚数变体，中英文关键词回退、分页、系列扩展并去重。
+
+    例如 query="AEC-Q100 isolated CAN"、family_queries=["ISO1042","NSI1042"]。
+    默认不按旧库存/价格提前排除候选；返回 found_by、requirements、constraint_match 和 coverage。
+    要检查 coverage.query_errors / remaining_candidates；空结果不证明市场不存在。
+    exact_identity=false 的候选不能冒充请求型号；Q1 后缀不证明车规，参数与资格仍核制造商资料。
+    未指定封装时优先覆盖不同封装；最终按 C 编号刷新采购数据，公开展示价不等于指定数量报价。
+    """
+    result = client.discover(query, max_results=max_results, family_queries=family_queries,
+                             constraints=constraints, package=package, brand=brand, in_stock=in_stock,
+                             max_price=max_price, max_queries=max_queries, pages_per_query=pages_per_query,
+                             refresh=refresh)
+    result["results"] = [{**row, "part": _part_payload(row["part"])} for row in result["results"]]
+    return _json(result)
+
+
+@mcp.tool(output_schema=None)
 def szlcsc_get_part(identifier: Identifier, refresh: bool = False) -> str:
-    """按 C 编号或明确 MPN 获取国内 SZLCSC 详情、参数、库存、价格、商品页和 Datasheet。"""
+    """按精确 C 编号/完整 MPN 获取国内详情、当前公开商品页库存/MOQ、商品资料。
+    procurement 区分有数量范围的报价和展示价。PART_NOT_FOUND 仅表示限定查询未命中；系列名请用 szlcsc_discover。
+    """
     try:
         return _json(_part_payload(client.get_part(identifier, refresh=refresh)))
     except SZLCSCError as exc:

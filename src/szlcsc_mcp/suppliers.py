@@ -84,6 +84,7 @@ class DomesticProvider:
                     fetched_at_unix=part.data_freshness.get("oldest_fetched_at_unix"),
                     cached=bool(part.data_freshness.get("cache_hits")),
                     warnings=part.warnings,
+                    pricing_basis=part.procurement.get("price_basis", "supplier_response"),
                 )
             ],
         )
@@ -91,15 +92,26 @@ class DomesticProvider:
     def search(self, query, *, page=1, limit=10, refresh=False):
         token = bypass.set(refresh or bypass.get())
         try:
-            records = [
-                self.convert(p)
-                for p in self.client.search(query, page=page, max_results=limit)
-            ]
+            records = []
+            start = (page - 1) * limit
+            remaining = limit
+            has_more = None
+            while remaining:
+                upstream_page, offset = divmod(start, self.client.SEARCH_PAGE_SIZE)
+                take = min(remaining, self.client.SEARCH_PAGE_SIZE - offset)
+                window = self.client.search(query, page=upstream_page + 1, max_results=50, enrich=False)
+                for part in window[offset:offset + take]:
+                    current = self.client.get_part(part.lcsc_code, refresh=refresh) if part.lcsc_code else part
+                    records.append(self.convert(current))
+                meta = getattr(window, "coverage", {})
+                has_more = True if offset + take < len(window) else meta.get("has_more")
+                start += take
+                remaining -= take
             return SupplierPage(
                 records=records,
-                has_more=None,
+                has_more=has_more,
                 warnings=[
-                    "Domestic search does not expose a reliable total; pagination completeness is unknown"
+                    "Domestic pages cover bounded ranked upstream windows; keep query/limit stable and inspect has_more"
                 ],
             )
         finally:
@@ -119,7 +131,7 @@ class DomesticProvider:
         # search() applies relevance filters, so its length cannot establish whether
         # the upstream page was exhausted. Inspect the unfiltered candidate window.
         params = {
-            "keyword": identifier, "currPage": 1, "pageSize": 50,
+            "keyword": identifier, "currPage": 1, "pageSize": self.client.SEARCH_PAGE_SIZE,
             "sort": 0, "stock": False,
         }
         token = bypass.set(refresh or bypass.get())
@@ -149,13 +161,19 @@ class DomesticProvider:
                     raise SourcingError(
                         "Invalid domestic candidate page", code="INVALID_RESPONSE"
                     )
-                return rows
+                total = data.get("total") if isinstance(data, dict) else None
+                return rows, total
 
-            rows = fetch_page()
-            has_more = len(rows) >= params["pageSize"]
-            if not has_more:
-                params["currPage"] = 2
-                has_more = bool(fetch_page())
+            rows = []
+            has_more = True
+            for number in range(1, 4):
+                params["currPage"] = number
+                window, total = fetch_page()
+                rows.extend(window)
+                if ((type(total) is int and total >= 0 and number * params["pageSize"] >= total)
+                        or (number > 1 and not window)):
+                    has_more = False
+                    break
             parts = [part_from_dict(row) for row in rows]
             exact = [
                 part for part in parts
@@ -165,6 +183,7 @@ class DomesticProvider:
                 raise SourcingError(
                     "Domestic result has no supplier identifier", code="INVALID_RESPONSE"
                 )
+            exact = list({part.lcsc_code: part for part in exact}.values())
             records = [
                 self.convert(self.client.get_part(part.lcsc_code, refresh=refresh))
                 for part in exact
@@ -477,8 +496,9 @@ class SupplierRegistry:
         selected = exact_records(response.records, identifier, manufacturer, package)
         if not selected:
             raise SourcingError(
+                "No exact identity resolved within an incomplete supplier window" if response.has_more else
                 "No exact supplier SKU/MPN matched the requested identity and filters",
-                code="PART_NOT_FOUND",
+                code="INCOMPLETE_RESULTS" if response.has_more else "PART_NOT_FOUND",
             )
         if response.has_more and not any(
             o.supplier_sku.strip().casefold() == identifier.strip().casefold()

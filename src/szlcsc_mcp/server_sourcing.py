@@ -42,6 +42,7 @@ def szlcsc_get_stock(identifier: Identifier, refresh: bool = True) -> dict:
         "source": part.source,
         "inventory_pool": "SZLCSC_domestic_retail",
         "data_freshness": part.data_freshness,
+        "procurement": part.procurement,
         "warnings": part.warnings,
     }
 
@@ -83,6 +84,8 @@ def szlcsc_get_pricing(
         if price is not None
         else None,
         "price_tiers": part.to_dict()["price_tiers"],
+        "procurement": part.procurement,
+        "advertised_unit_price_cny": part.procurement.get("advertised_unit_price_cny"),
         "source": part.source,
         "data_freshness": part.data_freshness,
         "warnings": part.warnings,
@@ -123,11 +126,14 @@ def szlcsc_jlcpcb_categories(refresh: bool = False) -> dict:
 @mcp.resource("szlcsc://sourcing-guide", mime_type="text/plain")
 def sourcing_guide() -> str:
     return (
-        "For domestic purchasing use szlcsc_search / szlcsc_parametric_search, then exact szlcsc_get_part. "
+        "For requirement/family discovery start with szlcsc_discover: inspect coverage, query_errors, "
+        "package/pin variants and unknown requirements. Empty results never establish market absence. "
+        "Use szlcsc_search / szlcsc_parametric_search for focused searches, then exact szlcsc_get_part. "
         "Before ordering use szlcsc_get_stock and szlcsc_get_pricing with refresh=true. "
         "CNY retail and JLCPCB assembly are different markets and stock pools. "
         "Null means unknown. Parametric matches and CAD assets never replace manufacturer datasheet verification. "
-        "A cache hit is a dated snapshot; upstream errors never silently return expired stock or price."
+        "A cache hit is a dated snapshot. Public advertised prices without quantity intervals are not quantity quotes; "
+        "procurement distinguishes them and supersedes disagreeing legacy API values."
     )
 
 
@@ -136,8 +142,11 @@ def select_domestic_component(requirements: str) -> str:
     """Guide a domestic component selection with explicit evidence and final fresh stock/price checks."""
     return (
         f"Select a domestic component for: {requirements}\n"
-        "Translate requirements into package and electrical constraints. Search domestic SZLCSC, inspect "
+        "Separate hard constraints from preferences; do not invent a stock/price filter. Start szlcsc_discover "
+        "with functional terms, then inspect returned families and package/pin variants; use family_queries to expand. "
+        "Read coverage/errors/remaining candidates, never call one empty query market absence. Translate electrical constraints and inspect "
         "constraint_match.all_matched and unknown fields, resolve exact C-codes, verify manufacturer datasheets, "
-        "then refresh domestic stock and CNY pricing for the requested quantity. Report unresolved constraints. "
+        "then refresh domestic stock and CNY pricing for the requested quantity. Report unknowns, advertisement-only prices, "
+        "and conflicts. Q1 suffixes or catalog text do not certify automotive qualification. "
         "Only use JLCPCB assembly tools when assembly library availability is requested."
     )

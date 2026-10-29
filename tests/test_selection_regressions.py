@@ -63,6 +63,7 @@ def test_package_pin_counts_are_text_not_equal_numbers():
 @pytest.mark.parametrize("actual,expected", [("SOIC-80", "SOIC-8"), ("TSOT-23-3", "SOT-23-3")])
 def test_package_family_matching_respects_token_boundaries(actual, expected):
     assert not evaluate_constraints(Part(package=actual), {"package": expected})["all_matched"]
+    assert not SZLCSCClient._matches_filters(Part(package=actual), package=expected)
 
 
 def test_input_voltage_range_and_explicit_limits_keep_correct_precedence():

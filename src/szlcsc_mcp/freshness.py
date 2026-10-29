@@ -39,7 +39,12 @@ def tracked(fn):
                     "refresh_requested": bypass.get(),
                     "stale_fallback": False,
                 }
-                rows = result if isinstance(result, list) else [result]
+                if isinstance(result, list):
+                    rows = result
+                elif isinstance(result, dict):
+                    rows = result.get("results", [result])
+                else:
+                    rows = [result]
                 for row in rows:
                     part = row.get("part") if isinstance(row, dict) else row
                     if isinstance(part, Part):

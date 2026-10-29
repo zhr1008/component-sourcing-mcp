@@ -180,9 +180,15 @@ def test_library_sync_refreshes_cached_inventory(monkeypatch, tmp_path, preview)
         calls.append(args[0])
         result = requests.Response()
         result.status_code = 200
-        result._content = json.dumps({"code": 200, "result": {"productList": [
-            {"code": "C1", "stockNumber": len(calls), "model": "PART"}
-        ]}}).encode()
+        if args[0] == "https://item.szlcsc.com/1.html":
+            result._content = ('<script id="__NEXT_DATA__">' + json.dumps({"props": {"pageProps": {"webData": {
+                "productRecord": {"productCode": "C1", "productModel": "PART", "productId": 1,
+                                  "stockNumber": len(calls) // 2},
+            }}}}) + '</script>').encode()
+        else:
+            result._content = json.dumps({"code": 200, "result": {"productList": [
+                {"code": "C1", "stockNumber": 999, "model": "PART", "id": 1}
+            ]}}).encode()
         result.url = "https://so.szlcsc.com/test"
         return result
 
@@ -197,7 +203,7 @@ def test_library_sync_refreshes_cached_inventory(monkeypatch, tmp_path, preview)
     tool = server.szlcsc_library_sync_preview if preview else server_base.szlcsc_library_sync
     result = json.loads(tool(str(library_root)))
     assert result["results"][0]["changes"]["stock"] == {"old": 1, "new": 2}
-    assert len(calls) == 2
+    assert len(calls) == 4
     assert bypass.get() is False
     if preview:
         assert load_index(library_root) == before

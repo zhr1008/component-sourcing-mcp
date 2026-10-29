@@ -60,3 +60,37 @@ def test_engineering_value_is_not_a_hard_model_anchor():
     meta = SZLCSCClient.search_relevance(part, "3.3V 电压基准")
     assert meta["hard_pass"] is True
     assert "3.3v" not in meta["missing_model_anchors"]
+
+
+def test_qualification_is_a_requirement_not_a_literal_model_anchor():
+    part = Part(mpn="ISO1042QDWRQ1", name="Isolated CAN transceiver")
+    meta = SZLCSCClient.search_relevance(part, "AEC-Q100 isolated CAN")
+    assert meta["hard_pass"] is True
+    assert "aec-q100" not in meta["missing_model_anchors"]
+
+
+def test_small_output_limit_does_not_limit_the_retrieval_window(tmp_path):
+    client = RelevanceClient(tmp_path)
+    try:
+        original = client._get_json
+        def limited(url, params=None, **kwargs):
+            data = original(url, params, **kwargs)
+            data["productList"] = data["productList"][:params["pageSize"]]
+            return data
+        client._get_json = limited
+        # The useful RS485 record follows a noisy first result.
+        assert client.search("RS485 收发器", max_results=1, enrich=False)[0].lcsc_code == "C222"
+    finally:
+        client.close()
+
+
+def test_iso_chip_family_is_still_a_model_anchor_and_can_substring_is_not_bus_evidence():
+    assert not SZLCSCClient.search_relevance(Part(mpn="OTHER", name="Isolated CAN transceiver"), "ISO1042")["hard_pass"]
+    assert not SZLCSCClient.search_relevance(Part(mpn="52CANP", name="connector"), "CAN transceiver")["hard_pass"]
+
+
+def test_rs485_alias_satisfies_function_without_literal_model_token():
+    part = Part(mpn="XYZ123", name="485收发器")
+    meta = SZLCSCClient.search_relevance(part, "RS485 transceiver")
+    assert meta["hard_pass"] is True
+    assert meta["missing_model_anchors"] == []

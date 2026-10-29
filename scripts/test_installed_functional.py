@@ -22,7 +22,7 @@ BASE = Path(__file__).resolve().parent
 ROOT = BASE / "functional-output"
 CONFIG = Path.home() / ".codex/config.toml"
 CONFIG_SERVER = "components"
-EXPECTED_VERSION = "0.8.0rc2"
+EXPECTED_VERSION = "0.8.0rc3"
 WHEEL = None
 REPORT = ROOT / "results.json"
 
@@ -420,7 +420,7 @@ async def main(phase):
     transport = StdioTransport(cfg["command"], cfg.get("args", []), env=env, cwd=str(ROOT), log_file=ROOT / f"server-{phase}.log")
     async with Client(transport, timeout=600) as client:
         tools = await client.list_tools()
-        require(len(tools) == 49, "wrong tool count")
+        require(len(tools) == 50, "wrong tool count")
         report["tool_names"] = [t.name for t in tools]
         report["protocol"] = client.protocol_version
         (ROOT / "tool-schemas.json").write_text(json.dumps([t.model_dump(mode="json", by_alias=True) for t in tools], ensure_ascii=False, indent=2), encoding="utf-8")

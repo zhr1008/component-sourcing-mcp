@@ -187,7 +187,7 @@ def part_from_dict(data: dict[str, Any]) -> Part:
         mpn=first(data, "model", "productModel", "mpn", "mfrPart", "manufacturerPartNumber"),
         name=first(data, "name", "productName", "title", "description"),
         brand=first(data, "brandName", "brand", "manufacturer", "manufacturerName"),
-        package=first(data, "standard", "package", "packageName", "encapsulation"),
+        package=first(data, "standard", "package", "packageName", "encapsulation", "encapsulationModel"),
         category_id=as_int(first(data, "catalogId", "categoryId")),
         category=first(data, "catalogName", "categoryName", "category"),
         product_id=product_id,

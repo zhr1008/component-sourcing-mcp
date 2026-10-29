@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import threading
 import time
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlparse
 
 import requests
-from bs4 import BeautifulSoup
 
 from .cache import SqliteCache
 from .errors import SourcingError
@@ -19,13 +17,22 @@ from . import __version__
 from .models import Part
 from .normalize import merge_part, normalize_c_code, normalize_datasheet_url, part_from_dict
 from .parametric import evaluate_constraints
+from .product_page import apply_snapshot, product_snapshot, unknown_procurement
 
 
 class SZLCSCError(SourcingError):
     pass
 
 
+class SearchResults(list):
+    """Keep the Python list contract while exposing the inspected upstream window."""
+    def __init__(self, rows=(), *, coverage=None):
+        super().__init__(rows)
+        self.coverage = coverage or {}
+
+
 class SZLCSCClient:
+    SEARCH_PAGE_SIZE = 30  # current mobile search caps each page at 30
     SEARCH_HOST = "https://so.szlcsc.com"
     ITEM_HOST = "https://item.szlcsc.com"
     LIST_HOST = "https://list.szlcsc.com"
@@ -129,6 +136,8 @@ class SZLCSCClient:
         (re.compile(r"运放|运算放大器|op\s*-?amp|operational\s+amplifier", re.I), ("运放", "运算放大器", "opamp", "op amp", "operational amplifier"), "opamp"),
         (re.compile(r"(?:^|\W)adc(?:$|\W)|模数转换|模/数转换", re.I), ("adc", "模数转换", "模/数转换"), "ADC"),
         (re.compile(r"(?:^|\W)dac(?:$|\W)|数模转换|数/模转换", re.I), ("dac", "数模转换", "数/模转换"), "DAC"),
+        (re.compile(r"(?:^|\W)mcu(?:$|\W)|微控制器|单片机|主控", re.I), ("mcu", "微控制器", "单片机", "microcontroller"), "MCU"),
+        (re.compile(r"(?:^|\W)afe(?:$|\W)|模拟前端", re.I), ("afe", "模拟前端", "analog front"), "AFE"),
     )
 
     @staticmethod
@@ -162,8 +171,10 @@ class SZLCSCClient:
         anchors because shallow search results often omit parametric values.
         """
         low = token.casefold()
+        if re.fullmatch(r"(?:aec[-_]?q\d+|iso[-_]\d+|iso26262|sil[-_]?\d+|asil[-_]?[abcd]|can[-_]?fd)", low):
+            return False
         if low in {"rs485", "rs-485", "rs422", "rs-422", "can"}:
-            return True
+            return False  # functional intent is checked using controlled aliases
         # Electrical value/unit tokens should influence score only, not gate results.
         if re.fullmatch(r"[-+]?\d+(?:\.\d+)?(?:p|n|u|µ|m|k|meg|g)?(?:v|a|f|h|hz|ohm|ω|%)?", low):
             return False
@@ -202,7 +213,8 @@ class SZLCSCClient:
             if not trigger.search(query_fold):
                 continue
             triggered_intents.append(label)
-            if any(alias.casefold() in haystack for alias in aliases):
+            if any((re.search(r"(?<![a-z0-9])can(?:[- ]?fd)?(?![a-z0-9])", haystack)
+                    if alias == "can" else alias.casefold() in haystack) for alias in aliases):
                 score += 25.0
             else:
                 missing_intents.append(label)
@@ -231,7 +243,7 @@ class SZLCSCClient:
         min_price: float | None = None,
         max_price: float | None = None,
     ) -> bool:
-        if package and (not part.package or package.casefold() not in part.package.casefold()):
+        if package and not evaluate_constraints(part, {"package": package})["all_matched"]:
             return False
         if brand and (not part.brand or brand.casefold() not in part.brand.casefold()):
             return False
@@ -259,44 +271,32 @@ class SZLCSCClient:
         sort: int = 0,
         enrich: bool = True,
         page: int = 1,
+        result_offset: int = 0,
     ) -> list[Part]:
         query = normalize_c_code(query.strip())
         if not query or not 1 <= max_results <= 50 or not 1 <= page <= 1000:
             raise SZLCSCError("query, max_results (1–50) and page (1–1000) are required", code="INVALID_ARGUMENT")
+        if type(result_offset) is not int or not 0 <= result_offset <= 50:
+            raise SZLCSCError("result_offset must be between 0 and 50", code="INVALID_ARGUMENT")
         if min_price is not None and max_price is not None and min_price > max_price:
             raise SZLCSCError("min_price must not exceed max_price", code="INVALID_ARGUMENT")
-        fetch_limit = min(max(max_results, 1), 50)
+        # Output size is not a recall budget. A stable page also lets callers
+        # advance pages without silently changing the upstream pagination window.
+        fetch_limit = self.SEARCH_PAGE_SIZE
         params = {
             "keyword": query,
             "currPage": page,
             "pageSize": fetch_limit,
             "sort": sort,
-            "stock": bool(in_stock) if in_stock is not None else False,
-            "queryBeginPrice": min_price,
-            "queryEndPrice": max_price,
+            # Legacy stock/price disagree with the current website. Never exclude
+            # candidates with these fields before current-page verification.
+            "stock": False,
             "standard": package,
             "catalog": category_id,
         }
         data = self._get_json(f"{self.SEARCH_HOST}/phone/p/product/search", params, ttl=600)
         parts = [part_from_dict(x) for x in self._product_list(data)]
-
-        if enrich:
-            enriched: list[Part] = []
-            for part in parts[:fetch_limit]:
-                if part.category_id and part.lcsc_code:
-                    try:
-                        extra = self._category_exact(part.category_id, part.lcsc_code)
-                        if extra:
-                            merge_part(part, extra)
-                    except SZLCSCError as exc:
-                        part.warnings.append(f"Category price/stock enrichment failed: {exc.code}")
-                enriched.append(part)
-            parts = enriched
-
-        parts = [part for part in parts if self._matches_filters(
-            part, package=package, brand=brand, in_stock=in_stock,
-            min_price=min_price, max_price=max_price,
-        )]
+        raw_count = len(parts)
 
         # Re-rank broad SZLCSC full-text results on the client side.  Exact C/MPN
         # lookups remain dominant, while explicit functional intents such as RS485
@@ -312,7 +312,49 @@ class SZLCSCClient:
                 item[0].mpn or item[0].lcsc_code or "",
             )
         )
-        return [x for x, _ in relevance[:max_results]]
+        out = []
+        inspected = 0
+        relevance = [(p, meta) for p, meta in relevance if self._matches_filters(p, package=package, brand=brand)]
+        for part, _ in relevance[result_offset:]:
+            inspected += 1
+            if enrich:
+                # A category response remains useful for identity/static gaps but
+                # is superseded by the own-product public procurement snapshot.
+                if part.category_id and part.lcsc_code:
+                    try:
+                        extra = self._category_exact(part.category_id, part.lcsc_code)
+                        if extra:
+                            merge_part(part, extra)
+                    except SZLCSCError as exc:
+                        part.warnings.append(f"Category enrichment failed: {exc.code}")
+                if part.product_url:
+                    try:
+                        self._enrich_from_html(part)
+                    except SZLCSCError as exc:
+                        unknown_procurement(part, exc.code)
+                else:
+                    unknown_procurement(part, "PRODUCT_PAGE_MISSING")
+            if not self._matches_filters(part, package=package, brand=brand, in_stock=in_stock,
+                                         min_price=min_price, max_price=max_price):
+                continue
+            out.append(part)
+            if len(out) >= max_results:
+                break
+        total = data.get("total") if isinstance(data, dict) else None
+        has_more = page * fetch_limit < total if type(total) is int and total >= 0 else (True if raw_count >= fetch_limit else None)
+        consumed = min(result_offset + inspected, len(relevance))
+        next_cursor = ({"page": page, "result_offset": consumed} if consumed < len(relevance) else
+                       {"page": page + 1, "result_offset": 0} if raw_count and has_more is not False and page < 1000 else None)
+        return SearchResults(out, coverage={
+            "query": query, "page": page, "page_size": fetch_limit, "raw_count": raw_count,
+            "relevant_count": len(relevance), "inspected_count": inspected,
+            "result_offset": result_offset, "next_cursor": next_cursor,
+            "returned_count": len(out), "uninspected_count": max(0, len(relevance) - consumed),
+            "has_more": has_more,
+            "next_page": page + 1 if page < 1000 else None,
+            "complete": False,
+            "scope": "One upstream window; empty/short results do not prove catalog or market absence",
+        })
 
     def _category_exact(self, category_id: int, c_code: str) -> Part | None:
         data = self._get_json(
@@ -337,7 +379,13 @@ class SZLCSCClient:
         identifier = normalize_c_code(identifier.strip())
         # Resolve identity before expensive category/price enrichment. A lookup
         # should not fetch twenty unrelated category pages before choosing a part.
-        candidates = self.search(identifier, max_results=20, enrich=False)
+        candidates = SearchResults()
+        for page in range(1, 4):
+            window = self.search(identifier, max_results=50, enrich=False, page=page)
+            candidates.extend(window)
+            meta = getattr(window, "coverage", {})
+            if meta.get("has_more") is False or meta.get("raw_count", len(window)) < self.SEARCH_PAGE_SIZE:
+                break
         ident = identifier.casefold()
         code_matches = [p for p in candidates if (p.lcsc_code or "").casefold() == ident]
         if code_matches:
@@ -362,7 +410,11 @@ class SZLCSCClient:
             raise SZLCSCError("identifier must not be empty", code="INVALID_ARGUMENT")
         part = self._find_exact(identifier)
         if not part:
-            raise SZLCSCError(f"No exact SZLCSC part found for {identifier!r}", code="PART_NOT_FOUND")
+            raise SZLCSCError(
+                f"No exact SZLCSC listing resolved within the bounded search for {identifier!r}. "
+                "Use szlcsc_discover for family/variant candidates; this does not establish market absence.",
+                code="PART_NOT_FOUND",
+            )
 
         if part.category_id and part.lcsc_code:
             try:
@@ -388,11 +440,14 @@ class SZLCSCClient:
             except SZLCSCError as exc:
                 part.warnings.append(f"Detail enrichment failed: {exc.code}")
 
-        if include_static and part.product_url:
+        # Procurement must be refreshed even for focused stock/price tools.
+        if part.product_url:
             try:
                 self._enrich_from_html(part)
             except SZLCSCError as exc:
-                part.warnings.append(f"HTML enrichment failed: {exc.code}")
+                unknown_procurement(part, exc.code)
+        else:
+            unknown_procurement(part, "PRODUCT_PAGE_MISSING")
         return part
 
     @staticmethod
@@ -410,11 +465,10 @@ class SZLCSCClient:
             for key, value in obj.items():
                 if not isinstance(value, str):
                     continue
-                low = value.lower()
                 key_low = key.lower()
                 if (
                     not part.datasheet_url
-                    and ("pdf" in key_low or "datasheet" in key_low or low.endswith(".pdf"))
+                    and key_low in {"out_pdf_url", "pdfurl", "pdflink", "datasheet", "datasheeturl"}
                 ):
                     candidate_url = normalize_datasheet_url(value)
                     if candidate_url:
@@ -425,22 +479,6 @@ class SZLCSCClient:
                     and value.startswith("http")
                 ):
                     part.image_url = value
-
-    @staticmethod
-    def _find_scalar(obj: Any, wanted_key: str) -> Any | None:
-        if isinstance(obj, dict):
-            for key, value in obj.items():
-                if key == wanted_key and value not in (None, ""):
-                    return value
-                found = SZLCSCClient._find_scalar(value, wanted_key)
-                if found not in (None, ""):
-                    return found
-        elif isinstance(obj, list):
-            for value in obj:
-                found = SZLCSCClient._find_scalar(value, wanted_key)
-                if found not in (None, ""):
-                    return found
-        return None
 
     def _annex_datasheet(self, c_code: str, annex_number: str) -> str | None:
         try:
@@ -462,10 +500,16 @@ class SZLCSCClient:
         return None
 
     def _enrich_from_html(self, part: Part) -> None:
+        with self._fetch_lock:
+            self._enrich_product_page(part)
+
+    def _enrich_product_page(self, part: Part) -> None:
         assert part.product_url
-        key = self.cache.make_key("GETHTML", part.product_url, None)
-        html = None if bypass.get() else self.cache.get(key, 86400)
-        if html is None:
+        # New namespace deliberately ignores previously cached raw page/session state.
+        key = self.cache.make_key("PUBLIC_PRODUCT_V1", part.product_url, None)
+        entry = self.cache.get_entry(key)
+        cached = not bypass.get() and entry is not None and time.time() - entry[1] < 300
+        if not cached:
             try:
                 def validate_page(url):
                     parsed = urlparse(url)
@@ -473,51 +517,20 @@ class SZLCSCClient:
                         raise SZLCSCError("Product page redirect left the domestic item host", code="ACCESS_DENIED")
                 with safe_get(self.session, part.product_url, validate=validate_page, timeout=self.timeout) as r:
                     r.raise_for_status()
-                    html = r.text
+                    snapshot = product_snapshot(r.text, part)
             except (requests.RequestException, SourcingError) as exc:
                 raise SZLCSCError("Product page enrichment unavailable", code=getattr(exc, "code", "NETWORK_ERROR")) from exc
             else:
-                self.cache.set(key, part.product_url, html)
-        soup = BeautifulSoup(html, "html.parser")
-
-        if not part.datasheet_url:
-            for a in soup.find_all("a", href=True):
-                href = str(a["href"])
-                text = a.get_text(" ", strip=True)
-                if ".pdf" in href.lower() or "数据手册" in text or "规格书" in text:
-                    normalized = normalize_datasheet_url(href)
-                    part.datasheet_url = normalized if normalized and urlparse(normalized).scheme else urljoin(part.product_url, href)
-                    break
-
-        for row in soup.find_all(["tr", "li"]):
-            cells = [
-                x.get_text(" ", strip=True)
-                for x in row.find_all(["th", "td", "span", "div"], recursive=False)
-            ]
-            cells = [x for x in cells if x]
-            if len(cells) == 2 and len(cells[0]) <= 40:
-                part.parameters.setdefault(cells[0].rstrip("：:"), cells[1])
-
-        node = soup.find("script", id="__NEXT_DATA__")
-        if node and node.string:
-            try:
-                payload = json.loads(node.string)
-                self._extract_detail_attachments(part, payload)
-                # SZLCSC also exposes an annex identifier in NEXT_DATA. The public
-                # showProductPDFAndPCB endpoint can provide the PDF when detail.out_pdf_url is empty.
-                if not part.datasheet_url and part.lcsc_code:
-                    annex_number = self._find_scalar(payload, "pdfDESProductId")
-                    if annex_number not in (None, ""):
-                        part.datasheet_url = self._annex_datasheet(part.lcsc_code, str(annex_number))
-                # Some pages contain the actual product object inside NEXT_DATA.
-                for obj in self._walk(payload):
-                    if isinstance(obj, dict) and any(k in obj for k in ("productCode", "code", "model")):
-                        candidate = part_from_dict(obj)
-                        if ((candidate.lcsc_code and candidate.lcsc_code == part.lcsc_code)
-                                or (candidate.mpn and candidate.mpn == part.mpn)):
-                            merge_part(part, candidate, dynamic=False)
-            except ValueError:
-                pass
+                self.cache.set(key, part.product_url, snapshot)
+        else:
+            snapshot = entry[0]
+        record(part.product_url, entry[1] if cached else int(time.time()), cached=cached)
+        try:
+            apply_snapshot(part, snapshot)
+        except SourcingError as exc:
+            raise SZLCSCError(str(exc), code=exc.code) from exc
+        if not part.datasheet_url and part.lcsc_code and snapshot.get("annex_number"):
+            part.datasheet_url = self._annex_datasheet(part.lcsc_code, snapshot["annex_number"])
 
     def parametric_search(
         self,
@@ -528,7 +541,7 @@ class SZLCSCClient:
         fetch_pool: int = 20,
         package: str | None = None,
         brand: str | None = None,
-        in_stock: bool | None = True,
+        in_stock: bool | None = None,
         max_price: float | None = None,
     ) -> list[dict[str, Any]]:
         pool = self.search(
@@ -536,8 +549,9 @@ class SZLCSCClient:
             max_results=min(max(fetch_pool, max_results), 50),
             package=package,
             brand=brand,
-            in_stock=in_stock,
-            max_price=max_price,
+            # Apply commercial filters only after full/current detail enrichment.
+            in_stock=None,
+            max_price=None,
             enrich=True,
         )
         evaluated: list[dict[str, Any]] = []
@@ -571,6 +585,11 @@ class SZLCSCClient:
 
         evaluated.sort(key=key)
         return evaluated[:max_results]
+
+    @tracked
+    def discover(self, query: str, **kwargs) -> dict[str, Any]:
+        from .discovery import discover
+        return discover(self, query, **kwargs)
 
     def alternatives(
         self, identifier: str, *, max_results: int = 10, in_stock_only: bool = True

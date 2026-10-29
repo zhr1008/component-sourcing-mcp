@@ -39,6 +39,7 @@ class Part:
     parameters: dict[str, Any] = field(default_factory=dict)
     source: str = "szlcsc.com"
     data_freshness: dict[str, Any] = field(default_factory=dict)
+    procurement: dict[str, Any] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

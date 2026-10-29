@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from .server_base import *  # noqa: F401,F403
-from .server_base import SZLCSCError, _json, client, main, mcp
+from .server_base import SZLCSCError, SyncLimit, SyncOffset, _json, _sync_page, client, main, mcp
 from .library import (
     LibraryError,
     audit_library,
@@ -55,8 +55,14 @@ def szlcsc_library_search(
 def szlcsc_library_sync_preview(
     library_root: str = "szlcsc-library",
     identifiers: list[str] | None = None,
+    offset: SyncOffset = 0,
+    limit: SyncLimit = 500,
 ) -> str:
-    """同步前只读预览：在线读取最新 SZLCSC 元数据并与本地库比较，不写 library-index。"""
+    """同步前只读预览：绕过 TTL 缓存读取 SZLCSC 元数据，不写 library-index。
+
+    每次最多处理 limit 项；如 has_more 为 true，用 next_offset 继续，并保持目标列表不变。
+    计数按目标处理进度计算，逐项错误请检查 results。
+    """
     try:
         index = load_index(library_root)
     except LibraryError as exc:
@@ -64,10 +70,11 @@ def szlcsc_library_sync_preview(
 
     parts = index.get("parts") or {}
     targets = identifiers or sorted(parts.keys())
+    page, pagination = _sync_page(targets, offset, limit)
     results: list[dict] = []
-    for identifier in targets[:500]:
+    for identifier in page:
         try:
-            part = client.get_part(identifier)
+            part = client.get_part(identifier, refresh=True)
             code = str(part.lcsc_code or "").upper()
             if not code:
                 raise SZLCSCError(f"No LCSC C-code resolved for {identifier!r}")
@@ -92,6 +99,7 @@ def szlcsc_library_sync_preview(
             results.append({"identifier": identifier, "ok": False, "status": "lookup_error", "error": str(exc)})
 
     return _json({
+        **pagination,
         "library_root": str(Path(library_root).expanduser().resolve()),
         "count": len(results),
         "changed": sum(1 for row in results if row.get("changed")),

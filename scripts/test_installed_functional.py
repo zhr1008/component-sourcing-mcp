@@ -22,7 +22,7 @@ BASE = Path(__file__).resolve().parent
 ROOT = BASE / "functional-output"
 CONFIG = Path.home() / ".codex/config.toml"
 CONFIG_SERVER = "components"
-EXPECTED_VERSION = "0.8.0rc1"
+EXPECTED_VERSION = "0.8.0rc2"
 WHEEL = None
 REPORT = ROOT / "results.json"
 

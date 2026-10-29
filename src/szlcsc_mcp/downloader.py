@@ -91,8 +91,15 @@ def _download(
     if pdf:
         url = normalize_datasheet_url(url) or url
     _validate_download_url(url, pdf=pdf)
-    if path.exists() and not force:
-        return
+    if path.exists():
+        if not path.is_file():
+            raise SZLCSCError("Download target is not a regular file")
+        if not force:
+            if not pdf:
+                return
+            with path.open("rb") as existing:
+                if existing.read(5) == b"%PDF-":
+                    return
     path.parent.mkdir(parents=True, exist_ok=True)
     max_bytes = int(os.getenv("SZLCSC_MAX_DOWNLOAD_BYTES", max_bytes or _DEFAULT_MAX_BYTES))
     tmp = path.with_suffix(path.suffix + ".part")

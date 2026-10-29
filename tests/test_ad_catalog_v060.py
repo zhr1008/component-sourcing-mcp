@@ -4,7 +4,11 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
+from szlcsc_mcp import ad_catalog
 from szlcsc_mcp.ad_catalog import export_ad_catalog, load_ad_catalog
+from szlcsc_mcp.ad_enrichment import build_verification_queue
 from szlcsc_mcp.ad_scan import scan_altium_libraries_resilient
 
 
@@ -189,3 +193,198 @@ def test_export_records_component_and_library_locations(monkeypatch, tmp_path):
     assert "Analog.SchLib" in text
     assert "Footprints.PcbLib" in text
     assert json_path.is_file()
+
+
+@pytest.mark.parametrize("change", ["pins", "binding", "pads", "geometry", "resolution"])
+def test_scan_invalidates_verification_when_cad_evidence_changes(monkeypatch, tmp_path, change):
+    sch, pcb = _library_files(tmp_path)
+    root = tmp_path / "catalog"
+    symbol = {"name": "U1", "pins": [{"number": "1"}], "footprint_links": [{"name": "QFN", "library": None}]}
+    footprint = {"name": "QFN", "pads": [{"number": "1"}], "geometry": {"pad_count": 1}}
+    monkeypatch.setattr(ad_catalog, "_parse_schlib", lambda path: [symbol])
+    monkeypatch.setattr(ad_catalog, "_parse_pcblib", lambda path: [footprint])
+    ad_catalog.scan_altium_libraries([sch, pcb], catalog_root=root)
+    catalog = load_ad_catalog(root)
+    entry = next(iter(catalog["symbols"].values()))
+    entry["enrichment"] = {"status": "resolved"}
+    entry["verification"] = {"status": "verified", "authority": "datasheet", "datasheet_pages": [4]}
+    ad_catalog.save_ad_catalog(root, catalog)
+
+    # A reparse of equivalent CAD data must preserve the verification.
+    ad_catalog.scan_altium_libraries([sch, pcb], catalog_root=root, reuse_unchanged=False)
+    assert next(iter(load_ad_catalog(root)["symbols"].values()))["verification"]["status"] == "verified"
+    assert not build_verification_queue(root)["queue"]
+
+    if change == "pins":
+        symbol["pins"] = [{"number": "2"}]
+        sch.write_bytes(b"changed-pins")
+    elif change == "binding":
+        symbol["footprint_links"] = [{"name": "OTHER", "library": None}]
+        sch.write_bytes(b"changed-binding")
+    elif change == "pads":
+        footprint["pads"] = [{"number": "2"}]
+        pcb.write_bytes(b"changed-pads")
+    elif change == "geometry":
+        footprint["geometry"] = {"pad_count": 1, "center_span_x_mm": 2}
+        pcb.write_bytes(b"changed-geometry")
+    else:
+        pcb.unlink()
+    ad_catalog.scan_altium_libraries([sch, pcb], catalog_root=root)
+    entry = next(iter(load_ad_catalog(root)["symbols"].values()))
+    assert entry["verification"]["status"] != "verified"
+    assert entry["verification"]["datasheet_pages"] == [4]
+    assert len(build_verification_queue(root)["queue"]) == 1
+
+
+@pytest.mark.parametrize("failed_kind", ["symbol", "footprint"])
+def test_retained_stale_cad_invalidates_verification(monkeypatch, tmp_path, failed_kind):
+    sch, pcb = _library_files(tmp_path)
+    root = tmp_path / "catalog"
+    symbol = {"name": "U1", "pins": [{"number": "1"}], "footprint_links": [{"name": "QFN"}]}
+    footprint = {"name": "QFN", "pads": [{"number": "1"}], "geometry": {"pad_count": 1}}
+    monkeypatch.setattr(ad_catalog, "_parse_schlib", lambda path: [symbol])
+    monkeypatch.setattr(ad_catalog, "_parse_pcblib", lambda path: [footprint])
+    scan_altium_libraries_resilient([sch, pcb], catalog_root=root)
+    catalog = load_ad_catalog(root)
+    entry = next(iter(catalog["symbols"].values()))
+    entry["enrichment"] = {"status": "resolved"}
+    entry["verification"] = {"status": "verified", "datasheet_pages": [4]}
+    ad_catalog.save_ad_catalog(root, catalog)
+
+    def fail(path):
+        raise ValueError("parser failed")
+
+    changed = sch if failed_kind == "symbol" else pcb
+    changed.write_bytes(b"changed-but-unparseable")
+    monkeypatch.setattr(ad_catalog, "_parse_schlib" if failed_kind == "symbol" else "_parse_pcblib", fail)
+    assert scan_altium_libraries_resilient([sch, pcb], catalog_root=root)["ok"] is False
+    entry = next(iter(load_ad_catalog(root)["symbols"].values()))
+    assert entry["verification"]["status"] == "stale_cad_changed"
+    assert entry["verification"]["datasheet_pages"] == [4]
+    assert len(build_verification_queue(root)["queue"]) == 1
+
+
+def test_equivalent_rescan_preserves_verification_with_datafile_hint(monkeypatch, tmp_path):
+    class HintedImplementation(FakeImplementation):
+        datafile_entity = "Footprints"
+        datafile_kind = "PCBLib"
+
+    class HintedSymbol(FakeSymbol):
+        def __init__(self):
+            super().__init__()
+            self.implementations = [HintedImplementation("SOT23_TEST")]
+
+    class HintedSchLib(FakeSchLib):
+        def __init__(self, path):
+            super().__init__(path)
+            self.symbols = [HintedSymbol()]
+
+    monkeypatch.setitem(sys.modules, "altium_monkey", SimpleNamespace(AltiumSchLib=HintedSchLib, AltiumPcbLib=FakePcbLib))
+    sch, pcb = _library_files(tmp_path)
+    other = tmp_path / "Other.PcbLib"
+    other.write_bytes(b"other")
+    root = tmp_path / "catalog"
+    scan_altium_libraries_resilient([sch, pcb, other], catalog_root=root)
+    catalog = load_ad_catalog(root)
+    entry = next(iter(catalog["symbols"].values()))
+    entry["verification"] = {"status": "verified", "datasheet_pages": [4]}
+    ad_catalog.save_ad_catalog(root, catalog)
+    scan_altium_libraries_resilient([sch, pcb, other], catalog_root=root, reuse_unchanged=False)
+    entry = next(iter(load_ad_catalog(root)["symbols"].values()))
+    assert entry["verification"]["status"] == "verified"
+    HintedImplementation.datafile_entity = "Other"
+    scan_altium_libraries_resilient([sch, pcb, other], catalog_root=root, reuse_unchanged=False)
+    entry = next(iter(load_ad_catalog(root)["symbols"].values()))
+    assert entry["resolved_footprint_links"][0]["library"] == "Other"
+    assert entry["verification"]["status"] == "stale_cad_changed"
+
+
+@pytest.mark.parametrize("duplicate", [False, True])
+@pytest.mark.parametrize("resilient", [False, True])
+def test_scan_respects_implementation_datafile_entity(monkeypatch, tmp_path, duplicate, resilient):
+    class HintedImplementation(FakeImplementation):
+        datafile_entity = "AnotherLibrary"
+
+    class HintedSymbol(FakeSymbol):
+        def __init__(self):
+            super().__init__()
+            self.implementations = [HintedImplementation("SOT23_TEST")]
+
+    class HintedSchLib(FakeSchLib):
+        def __init__(self, path):
+            super().__init__(path)
+            self.symbols = [HintedSymbol()]
+
+    monkeypatch.setitem(sys.modules, "altium_monkey", SimpleNamespace(AltiumSchLib=HintedSchLib, AltiumPcbLib=FakePcbLib))
+    sch, pcb = _library_files(tmp_path)
+    root = tmp_path / "catalog"
+    paths = [sch, pcb]
+    if duplicate:
+        other = tmp_path / "Other.PcbLib"
+        other.write_bytes(b"other")
+        paths.append(other)
+    scan = scan_altium_libraries_resilient if resilient else ad_catalog.scan_altium_libraries
+    for _ in range(2):
+        scan(paths, catalog_root=root)
+        link = next(iter(load_ad_catalog(root)["symbols"].values()))["resolved_footprint_links"][0]
+        assert link["library"] == "AnotherLibrary"
+        assert link["status"] == "missing" and not link["candidates"]
+
+
+@pytest.mark.parametrize("last_good", [False, True])
+def test_scan_retries_failed_files_until_recovery(monkeypatch, tmp_path, last_good):
+    sch = tmp_path / "test.SchLib"
+    sch.write_text("initial", encoding="utf-8")
+    root = tmp_path / "catalog"
+    calls = []
+    fail = False
+
+    def parse(path):
+        calls.append(path)
+        if fail:
+            raise ValueError("parser failed")
+        return [{"name": "U1", "pins": [], "footprint_links": []}]
+
+    monkeypatch.setattr(ad_catalog, "_parse_schlib", parse)
+    if last_good:
+        assert scan_altium_libraries_resilient([sch], catalog_root=root)["ok"]
+        sch.write_text("changed", encoding="utf-8")
+    fail = True
+    for _ in range(2):
+        result = scan_altium_libraries_resilient([sch], catalog_root=root)
+        assert result["ok"] is False
+        assert result["reused_files"] == 0
+        catalog = load_ad_catalog(root)
+        assert catalog["files"][str(sch.resolve())]["scan_status"] in {"error", "stale_due_to_parse_error"}
+        assert len(catalog["symbols"]) == int(last_good)
+        if last_good:
+            assert next(iter(catalog["symbols"].values()))["catalog_stale"] is True
+    fail = False
+    result = scan_altium_libraries_resilient([sch], catalog_root=root)
+    assert result["ok"] is True and result["parsed_files"] == 1
+    assert len(calls) == 3 + int(last_good)
+    assert "catalog_stale" not in next(iter(load_ad_catalog(root)["symbols"].values()))
+    assert scan_altium_libraries_resilient([sch], catalog_root=root)["reused_files"] == 1
+
+
+@pytest.mark.parametrize(
+    ("hint", "paths", "expected"),
+    [
+        ("right.PcbLib", ["/lib/wrong.PcbLib"], []),
+        ("right.PcbLib", ["/lib/wrong.PcbLib", "/lib/other.PcbLib"], []),
+        ("right", ["/lib/right.PcbLib", "/lib/right-extra.PcbLib"], ["0"]),
+        (r"C:\\lib\\right.PcbLib", ["C:/lib/right.PcbLib", "C:/other/right.PcbLib"], ["0"]),
+        ("lib/right.PcbLib", ["/project/lib/right.PcbLib", "/project/other/right.PcbLib"], ["0"]),
+        (None, ["/lib/wrong.PcbLib"], ["0"]),
+        (None, ["/lib/a.PcbLib", "/lib/b.PcbLib"], ["0", "1"]),
+    ],
+)
+def test_footprint_library_hint_restricts_candidates(hint, paths, expected):
+    catalog = {
+        "symbols": {"s": {"footprint_links": [{"name": "QFN", "library": hint}]}},
+        "footprints": {str(i): {"name": "QFN", "library_path": path} for i, path in enumerate(paths)},
+    }
+    ad_catalog._resolve_footprint_links(catalog)
+    link = catalog["symbols"]["s"]["resolved_footprint_links"][0]
+    assert link["candidates"] == expected
+    assert link["status"] == ("resolved" if len(expected) == 1 else "ambiguous" if expected else "missing")

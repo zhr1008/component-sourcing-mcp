@@ -116,3 +116,28 @@ def test_relative_szlcsc_datasheet_path_is_resolved_to_attachment_cdn(tmp_path):
         "https://atta.szlcsc.com/upload/public/pdf/source/20210621/C2040_96F425825606B7957D87DD32E2512CA9.pdf"
     ]
     assert target.read_bytes().startswith(b"%PDF-")
+
+
+def test_nonforce_download_replaces_invalid_existing_pdf(tmp_path):
+    target = tmp_path / "part.pdf"
+    target.write_bytes(b"not a pdf")
+    _download(_FakeSession(body=b"%PDF-new"), "https://atta.szlcsc.com/a.pdf", target, 1, pdf=True, force=False)
+    assert target.read_bytes() == b"%PDF-new"
+
+
+def test_nonforce_download_does_not_accept_directory_as_pdf(tmp_path):
+    target = tmp_path / "part.pdf"
+    target.mkdir()
+    with pytest.raises((SZLCSCError, OSError)):
+        _download(_FakeSession(), "https://atta.szlcsc.com/a.pdf", target, 1, pdf=True, force=False)
+
+
+def test_existing_valid_pdf_is_reused_and_failed_refresh_preserves_it(tmp_path):
+    target = tmp_path / "part.pdf"
+    target.write_bytes(b"%PDF-existing")
+    class NoNetwork:
+        def get(self, *args, **kwargs): raise AssertionError("valid cache should be reused")
+    _download(NoNetwork(), "https://atta.szlcsc.com/a.pdf", target, 1, pdf=True, force=False)
+    with pytest.raises(SZLCSCError, match="not a PDF"):
+        _download(_FakeSession(body=b"invalid"), "https://atta.szlcsc.com/a.pdf", target, 1, pdf=True, force=True)
+    assert target.read_bytes() == b"%PDF-existing"

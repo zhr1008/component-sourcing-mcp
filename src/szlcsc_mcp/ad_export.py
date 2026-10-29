@@ -7,6 +7,7 @@ from typing import Any
 
 from .ad_catalog import load_ad_catalog
 from .ad_utils import normalize_text, resolved_path, utc_now, utc_stamp
+from .export_utils import csv_cell
 from .library_base import LibraryError
 
 
@@ -127,7 +128,7 @@ def export_ad_catalog_complete(
         with path.open("w", encoding="utf-8-sig", newline="") as fh:
             writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows({key: csv_cell(value) for key, value in row.items()} for row in rows)
         files["csv"] = str(path)
 
     return {

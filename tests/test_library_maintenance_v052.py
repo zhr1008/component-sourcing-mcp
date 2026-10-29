@@ -1,5 +1,8 @@
 import json
+import csv
 from pathlib import Path
+
+import pytest
 
 from szlcsc_mcp.library_base import empty_index, part_entry, rebuild_indexes, save_index
 from szlcsc_mcp.library_maintenance import export_library, preview_entry_changes, scan_orphan_files
@@ -85,6 +88,22 @@ def test_export_writes_json_and_excel_friendly_csv(tmp_path):
     assert payload["parts"][0]["has_datasheet"] is True
     assert csv_path.read_bytes().startswith(b"\xef\xbb\xbf")
     assert "C5291487" in csv_path.read_text(encoding="utf-8-sig")
+
+
+@pytest.mark.parametrize("value", ["=1+1", "+1+1", "-1+1", "@SUM(1)", " \t=1+1", "\r=1+1", "\n=1+1", "safe-MPN"])
+def test_inventory_csv_preserves_text_without_executing_formulas(tmp_path, value):
+    root = tmp_path / "library"
+    index = empty_index()
+    index["parts"]["C1"] = part_entry(_part(lcsc_code="C1", mpn=value, small_batch_price_cny=-1.0))
+    rebuild_indexes(index)
+    save_index(root, index)
+    result = export_library(root, output_dir=tmp_path / "exports")
+    with Path(result["files"]["csv"]).open(encoding="utf-8-sig", newline="") as file:
+        row = next(csv.DictReader(file))
+    assert row["mpn"] == (value if value == "safe-MPN" else "'" + value)
+    assert row["small_batch_price_cny"] == "-1.0"
+    original = json.loads(Path(result["files"]["json"]).read_text(encoding="utf-8"))
+    assert original["parts"][0]["mpn"] == value
 
 
 def test_orphan_scan_reports_unreferenced_files_but_not_referenced_assets(tmp_path):

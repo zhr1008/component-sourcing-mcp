@@ -1,19 +1,23 @@
 from __future__ import annotations
 
+import copy
 import csv
 import hashlib
 import json
 import math
+import posixpath
 import re
 import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+from .export_utils import csv_cell
 from .library_base import LibraryError
 
 CATALOG_SCHEMA_VERSION = 1
 CATALOG_FILENAME = "altium-catalog.json"
+VERIFIED_EVIDENCE_STATUSES = frozenset({"verified", "pins_verified", "footprint_numbering_verified"})
 
 _LCSC_RE = re.compile(r"(?<![A-Za-z0-9])C\d{3,}(?![A-Za-z0-9])", re.IGNORECASE)
 _CCODE_KEYS = {
@@ -345,6 +349,19 @@ def _parse_schlib(path: Path) -> list[dict[str, Any]]:
         name = _safe_text(_attr(symbol, "name", "Name")) or "unnamed"
         parameters = _parameter_dict(symbol)
         description = _safe_text(_attr(symbol, "description", "Description"))
+        datafile_hints = []
+        for attr_name in ("implementations", "models", "footprints", "objects"):
+            for item in _iter(_attr(symbol, attr_name)):
+                model_name = _safe_text(_attr(item, "model_name", "ModelName", "name"))
+                model_type = _safe_text(_attr(item, "model_type", "ModelType"))
+                cls_name = item.__class__.__name__.casefold()
+                if not model_name or (model_type and "pcb" not in model_type.casefold()):
+                    continue
+                if not model_type and "implementation" not in cls_name and "footprint" not in cls_name:
+                    continue
+                datafile = _safe_text(_attr(item, "datafile_entity", "model_datafile_entity", "library_name", "datafile", "model_datafile", "ModelDatafileEntity0", "ModelDatafile0"))
+                if datafile:
+                    datafile_hints.append((model_name, datafile, _safe_text(_attr(item, "datafile_kind", "ModelDatafileKind0"))))
         rows.append({
             "name": name,
             "description": description,
@@ -352,6 +369,7 @@ def _parse_schlib(path: Path) -> list[dict[str, Any]]:
             "pins": _pin_rows(symbol),
             "footprint_links": _footprint_links(symbol, parameters),
             "identity_hints": _identity_hints(name, parameters),
+            "_datafile_hints": datafile_hints,
         })
     return rows
 
@@ -410,6 +428,44 @@ def _asset_id(kind: str, library_path: str, name: str) -> str:
     return f"{kind}:{hashlib.sha1(raw).hexdigest()}"
 
 
+def _library_hint_matches(hint: str, library_path: str) -> bool:
+    def normalize(value: str) -> str:
+        value = posixpath.normpath(value.strip().replace("\\", "/")).casefold()
+        return value.removesuffix(".pcblib")
+
+    wanted = normalize(hint)
+    actual = normalize(library_path)
+    if wanted in {"", "."} or actual in {"", "."}:
+        return False
+    if wanted.startswith("/") or re.match(r"^[a-z]:", wanted):
+        return actual == wanted
+    return actual == wanted or actual.endswith("/" + wanted)
+
+
+def _mark_cad_verification_stale(symbol: dict[str, Any]) -> None:
+    verification = symbol.get("verification") or {}
+    if verification.get("status") in VERIFIED_EVIDENCE_STATUSES:
+        symbol["verification"] = {
+            **verification,
+            "status": "stale_cad_changed",
+            "stale_at": _now(),
+            "reason": "symbol or linked footprint CAD evidence changed or is stale",
+        }
+
+
+def _cad_evidence(symbol: dict[str, Any], footprints: dict[str, Any]) -> tuple[Any, ...]:
+    links = symbol.get("resolved_footprint_links")
+    linked = {}
+    for link in links or []:
+        for asset_id in link.get("candidates") or []:
+            footprint = footprints.get(asset_id)
+            linked[asset_id] = None if footprint is None else {
+                key: footprint.get(key)
+                for key in ("name", "library_path", "pads", "geometry", "component_body_count", "catalog_stale")
+            }
+    return (symbol.get("pins"), symbol.get("footprint_links"), symbol.get("identity_hints"), links, linked)
+
+
 def _resolve_footprint_links(catalog: dict[str, Any]) -> None:
     index: dict[str, list[str]] = {}
     for asset_id, row in catalog.get("footprints", {}).items():
@@ -420,16 +476,18 @@ def _resolve_footprint_links(catalog: dict[str, Any]) -> None:
         resolved: list[dict[str, Any]] = []
         issues = [item for item in symbol.get("issues", []) if item.get("kind") != "footprint_link"]
         for link in symbol.get("footprint_links", []):
+            if not link.get("library"):
+                hint = next((hint for hint in symbol.get("_datafile_hints", [])
+                             if _norm(hint[0]) == _norm(link.get("name"))), None)
+                if hint:
+                    link = {**link, "library": hint[1], "library_kind": hint[2], "source": "altium_implementation_datafile"}
             candidates = list(index.get(_norm(link.get("name"))) or [])
-            library_hint = _norm(link.get("library"))
-            if library_hint and len(candidates) > 1:
-                narrowed = [
+            library_hint = str(link.get("library") or "").strip()
+            if library_hint:
+                candidates = [
                     asset_id for asset_id in candidates
-                    if library_hint in _norm(catalog["footprints"][asset_id].get("library_path"))
-                    or library_hint in _norm(Path(catalog["footprints"][asset_id].get("library_path", "")).stem)
+                    if _library_hint_matches(library_hint, str(catalog["footprints"][asset_id].get("library_path") or ""))
                 ]
-                if narrowed:
-                    candidates = narrowed
             status = "resolved" if len(candidates) == 1 else ("missing" if not candidates else "ambiguous")
             resolved.append({**link, "status": status, "candidates": candidates})
             if status != "resolved":
@@ -439,6 +497,12 @@ def _resolve_footprint_links(catalog: dict[str, Any]) -> None:
                     "name": link.get("name"),
                     "candidate_count": len(candidates),
                 })
+        previous_links = symbol.get("resolved_footprint_links")
+        if (previous_links is not None and previous_links != resolved) or symbol.get("catalog_stale") or any(
+            (catalog["footprints"].get(asset_id) or {}).get("catalog_stale")
+            for link in resolved for asset_id in link.get("candidates", [])
+        ):
+            _mark_cad_verification_stale(symbol)
         symbol["resolved_footprint_links"] = resolved
         symbol["issues"] = issues
 
@@ -471,7 +535,11 @@ def scan_altium_libraries(
         kind = "SchLib" if path.suffix.casefold() == ".schlib" else "PcbLib"
         fingerprint = _fingerprint(path, hash_file=hash_files)
         old_file = old_files.get(path_str) or {}
-        unchanged = reuse_unchanged and old_file.get("kind") == kind and _fingerprint_matches(old_file.get("fingerprint") or {}, fingerprint)
+        unchanged = (
+            reuse_unchanged and old_file.get("kind") == kind
+            and old_file.get("scan_status") == "ok"
+            and _fingerprint_matches(old_file.get("fingerprint") or {}, fingerprint)
+        )
         file_row = {"path": path_str, "kind": kind, "fingerprint": fingerprint, "scan_status": "ok"}
 
         if unchanged:
@@ -480,7 +548,7 @@ def scan_altium_libraries(
                 source = old_symbols.get(asset_id) if kind == "SchLib" else old_footprints.get(asset_id)
                 if source:
                     target = catalog["symbols"] if kind == "SchLib" else catalog["footprints"]
-                    target[asset_id] = source
+                    target[asset_id] = copy.deepcopy(source)
             file_row["asset_ids"] = list(old_file.get("asset_ids") or [])
             file_row["reused"] = True
             catalog["files"][path_str] = file_row
@@ -491,6 +559,8 @@ def scan_altium_libraries(
             parsed_files += 1
             asset_ids: list[str] = []
             for item in parsed:
+                item = copy.deepcopy(item)
+                datafile_hints = item.pop("_datafile_hints", [])
                 asset_id = _asset_id("symbol" if kind == "SchLib" else "footprint", path_str, item["name"])
                 asset_ids.append(asset_id)
                 previous = old_symbols.get(asset_id) if kind == "SchLib" else old_footprints.get(asset_id)
@@ -502,7 +572,20 @@ def scan_altium_libraries(
                     **item,
                     "scanned_at": _now(),
                 }
+                if datafile_hints:
+                    row["_datafile_hints"] = datafile_hints
                 if previous:
+                    # The resilient scanner adds DATAFILE hints after parsing. Reapply
+                    # them only when this parse confirms them, before comparing evidence.
+                    for link in row.get("footprint_links") or []:
+                        if link.get("library"):
+                            continue
+                        prior = next((old_link for old_link in previous.get("footprint_links", [])
+                                      if old_link.get("source") == "altium_implementation_datafile"
+                                      and _norm(old_link.get("name")) == _norm(link.get("name"))), None)
+                        hint = next((hint for hint in datafile_hints if _norm(hint[0]) == _norm(link.get("name"))), None)
+                        if prior and hint:
+                            link.update({"library": hint[1], "library_kind": hint[2], "source": "altium_implementation_datafile"})
                     for carry in ("enrichment", "verification", "property_patch"):
                         if carry in previous:
                             row[carry] = previous[carry]
@@ -518,6 +601,10 @@ def scan_altium_libraries(
         catalog["files"][path_str] = file_row
 
     _resolve_footprint_links(catalog)
+    for asset_id, symbol in catalog["symbols"].items():
+        previous = old_symbols.get(asset_id)
+        if previous and _cad_evidence(previous, old_footprints) != _cad_evidence(symbol, catalog["footprints"]):
+            _mark_cad_verification_stale(symbol)
     save_ad_catalog(root, catalog)
     return {
         "ok": not parse_errors,
@@ -635,7 +722,7 @@ def export_ad_catalog(
         with path.open("w", encoding="utf-8-sig", newline="") as fh:
             writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows({key: csv_cell(value) for key, value in row.items()} for row in rows)
         files["csv"] = str(path)
     return {"ok": True, "count": len(rows), "output_dir": str(out), "files": files, "offline": True}
 

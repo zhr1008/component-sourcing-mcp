@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 concurrency:
   group: release-${{ inputs.version }}
@@ -117,6 +118,26 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Require successful CI for target commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ steps.release.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow tests.yml \
+            --commit "$TARGET_SHA" --event push --limit 100 \
+            --json headSha,event,status,conclusion > "$RUNNER_TEMP/release-ci-runs.json"
+          python - "$TARGET_SHA" "$RUNNER_TEMP/release-ci-runs.json" <<'PY'
+          import json, pathlib, sys
+          target, filename = sys.argv[1:]
+          runs = json.loads(pathlib.Path(filename).read_text(encoding='utf-8'))
+          if not any(run.get('headSha') == target and run.get('event') == 'push'
+                     and run.get('status') == 'completed' and run.get('conclusion') == 'success'
+                     for run in runs):
+              raise SystemExit('Release target needs successful push CI from tests.yml before publication.')
+          PY
 
       - name: Privacy guard before publishing any archive or tag
         run: python -X utf8 scripts/check_publication_privacy.py

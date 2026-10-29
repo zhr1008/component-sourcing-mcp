@@ -13,9 +13,11 @@ import pytest
 import requests
 
 from szlcsc_mcp.cache import SqliteCache
+from szlcsc_mcp.client import SZLCSCClient
 from szlcsc_mcp.digikey import DigiKeyClient
 from szlcsc_mcp.errors import SourcingError
 from szlcsc_mcp.mouser import MouserClient
+from szlcsc_mcp.normalize import part_from_dict
 from szlcsc_mcp.supplier_http import DailyBudget
 from szlcsc_mcp.supplier_models import (
     ComponentIdentity,
@@ -26,7 +28,12 @@ from szlcsc_mcp.supplier_models import (
     amount,
     integer,
 )
-from szlcsc_mcp.suppliers import SupplierRegistry, UnavailableProvider, build_registry
+from szlcsc_mcp.suppliers import (
+    DomesticProvider,
+    SupplierRegistry,
+    UnavailableProvider,
+    build_registry,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -515,6 +522,125 @@ def test_exact_lookup_rejects_ambiguous_makers_and_prefers_sku():
     assert registry.get("mouser", "123-ABC")["offers"][0]["supplier_sku"] == "123-ABC"
     with pytest.raises(SourcingError):
         registry.get("mouser", "AB")
+
+
+def domestic_fixture(monkeypatch, pages):
+    client = SZLCSCClient.__new__(SZLCSCClient)
+    rows = [row for page in pages for row in page]
+    calls = []
+
+    def get_json(url, params, ttl=600):
+        calls.append((url, params.copy()))
+        page = params["currPage"]
+        return {"productList": pages[page - 1] if page <= len(pages) else []}
+
+    def search(identifier, **kwargs):
+        return [
+            part_from_dict(row) for row in rows
+            if identifier.casefold() in (row["model"].casefold(), row["code"].casefold())
+        ]
+
+    monkeypatch.setattr(client, "_get_json", get_json)
+    monkeypatch.setattr(client, "search", search)
+    return SupplierRegistry([DomesticProvider(client)]), calls
+
+
+def domestic_row(code, maker, package, mpn="ABC"):
+    return {"code": code, "model": mpn, "brandName": maker, "standard": package}
+
+
+def test_domestic_exact_mpn_filters_and_unfiltered_ambiguity(monkeypatch):
+    rows = [
+        domestic_row("C1", "Maker A", "P1"),
+        domestic_row("C2", "Maker B", "P2"),
+        domestic_row("C3", "Maker A", "P2"),
+        domestic_row("C4", "Maker A", "P1", "ABCD"),
+    ]
+    registry, _ = domestic_fixture(monkeypatch, [rows, []])
+    found = registry.get("szlcsc", "ABC", manufacturer="maker a", package="p1")
+    assert found["offers"][0]["supplier_sku"] == "C1"
+    assert registry.get("szlcsc", "ABC", manufacturer="Maker B")["offers"][0][
+        "supplier_sku"
+    ] == "C2"
+    with pytest.raises(SourcingError) as caught:
+        registry.get("szlcsc", "ABC")
+    assert caught.value.code == "AMBIGUOUS_PART"
+    with pytest.raises(SourcingError) as caught:
+        registry.get("szlcsc", "ABC", manufacturer="Maker A")
+    assert caught.value.code == "AMBIGUOUS_PART"
+    result = registry.offers("ABC", manufacturer="Maker B", providers=["szlcsc"])
+    assert result["complete"] and result["offers"][0]["offer"]["supplier_sku"] == "C2"
+
+
+@pytest.mark.parametrize("full_first_page", [False, True])
+def test_domestic_incomplete_window_never_claims_unique_match(monkeypatch, full_first_page):
+    first = [domestic_row("C1", "Maker A", "P1")]
+    if full_first_page:
+        first.extend(
+            domestic_row(f"C{i}", "Other", "P2", f"OTHER{i}") for i in range(2, 51)
+        )
+    registry, _ = domestic_fixture(
+        monkeypatch, [first, [domestic_row("C99", "Maker A", "P1")]]
+    )
+    with pytest.raises(SourcingError) as caught:
+        registry.get("szlcsc", "ABC", manufacturer="Maker A", package="P1")
+    assert caught.value.code == "AMBIGUOUS_PART"
+    result = registry.offers("ABC", providers=["szlcsc"])
+    assert not result["complete"]
+    assert result["provider_errors"][0]["error"]["code"] == "INCOMPLETE_RESULTS"
+
+
+def test_domestic_exact_code_uses_legacy_lookup_fastpath(monkeypatch):
+    registry, calls = domestic_fixture(monkeypatch, [[domestic_row("C1", "Maker A", "P1")]])
+    found = registry.get("szlcsc", "C1")
+    assert found["offers"][0]["supplier_sku"] == "C1"
+    assert calls == []
+
+
+@pytest.mark.parametrize("empty", [False, True])
+def test_domestic_null_page_is_empty_only_after_the_reported_end(monkeypatch, empty):
+    first = [] if empty else [domestic_row("C1", "Maker A", "P1")]
+    registry, _ = domestic_fixture(monkeypatch, [first, []])
+    client = registry.providers["szlcsc"].client
+
+    def get_json(url, params, ttl=600):
+        return {"productList": None if empty or params["currPage"] == 2 else first, "total": len(first)}
+
+    monkeypatch.setattr(client, "_get_json", get_json)
+    if empty:
+        with pytest.raises(SourcingError) as caught:
+            registry.get("szlcsc", "ABC")
+        assert caught.value.code == "PART_NOT_FOUND"
+    else:
+        assert registry.get("szlcsc", "ABC")["offers"][0]["supplier_sku"] == "C1"
+
+
+def test_domestic_null_page_before_reported_end_is_not_treated_as_complete(monkeypatch):
+    registry, _ = domestic_fixture(monkeypatch, [[], []])
+    monkeypatch.setattr(registry.providers["szlcsc"].client, "_get_json", lambda *a, **k: {"productList": None, "total": 1})
+    with pytest.raises(SourcingError) as caught:
+        registry.get("szlcsc", "ABC")
+    assert caught.value.code == "INVALID_RESPONSE"
+
+
+def test_component_get_passes_domestic_identity_filters(monkeypatch):
+    from szlcsc_mcp import server, server_suppliers
+
+    registry, _ = domestic_fixture(monkeypatch, [[
+        domestic_row("C1", "Maker A", "P1"),
+        domestic_row("C2", "Maker B", "P2"),
+    ], []])
+    monkeypatch.setattr(server_suppliers, "registry", registry)
+
+    async def run():
+        async with Client(server.mcp) as client:
+            result = await client.call_tool("component_get", {
+                "provider": "szlcsc", "identifier": "ABC",
+                "manufacturer": "Maker A", "package": "P1",
+            })
+            assert result.structured_content["offers"][0]["supplier_sku"] == "C1"
+
+    asyncio.run(run())
 
 
 def test_offer_comparison_keeps_currencies_markets_and_unknown_identity_separate():

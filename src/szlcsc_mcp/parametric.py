@@ -133,7 +133,7 @@ def find_parameter(part: Part, name: str) -> tuple[str | None, Any]:
         if len(c) < 2:
             continue
         for nk, pair in normalized.items():
-            if c in nk or nk in c:
+            if c in nk:
                 return pair
     return None, None
 

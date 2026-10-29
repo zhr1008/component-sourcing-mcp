@@ -7,7 +7,7 @@ description: Source components across SZLCSC, JLCPCB, Mouser and DigiKey with ex
 
 用户要求国内立创商城、`item.szlcsc.com`、人民币按数量报价、实时/分仓库存、Cxxxx/MPN、封装与电气参数选型、JLCPCB 基础/优选/扩展贴片库、Datasheet、EasyEDA/STEP、Altium 库，或整理已有 SchLib/PcbLib 时使用本技能。
 
-本说明适用于 Component Sourcing MCP v0.8.0-rc.1 的 49 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
+本说明适用于 Component Sourcing MCP v0.8.0-rc.2 的 49 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
 
 ## 多供应商入口
 

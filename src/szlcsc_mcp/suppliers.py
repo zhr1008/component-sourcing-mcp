@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from typing import Protocol
@@ -11,6 +12,7 @@ from .errors import SourcingError, error_payload
 from .freshness import bypass
 from .models import Part
 from .mouser import MouserClient
+from .normalize import normalize_c_code, part_from_dict
 from .parametric import evaluate_constraints
 from .supplier_config import read_supplier_settings
 from .supplier_models import (
@@ -104,11 +106,72 @@ class DomesticProvider:
             bypass.reset(token)
 
     def lookup(self, identifier, *, refresh=True):
-        return SupplierPage(
-            records=[self.convert(self.client.get_part(identifier, refresh=refresh))],
-            total=1,
-            has_more=False,
-        )
+        identifier = normalize_c_code(identifier.strip())
+        if re.fullmatch(r"C\d+", identifier):
+            return SupplierPage(
+                records=[self.convert(self.client.get_part(identifier, refresh=refresh))],
+                total=1,
+                has_more=False,
+            )
+        if not identifier:
+            raise SourcingError("identifier must not be empty", code="INVALID_ARGUMENT")
+
+        # search() applies relevance filters, so its length cannot establish whether
+        # the upstream page was exhausted. Inspect the unfiltered candidate window.
+        params = {
+            "keyword": identifier, "currPage": 1, "pageSize": 50,
+            "sort": 0, "stock": False,
+        }
+        token = bypass.set(refresh or bypass.get())
+        try:
+            def fetch_page():
+                data = self.client._get_json(
+                    f"{self.client.SEARCH_HOST}/phone/p/product/search", params, ttl=600
+                )
+                rows = data if isinstance(data, list) else None
+                if isinstance(data, dict):
+                    rows = next(
+                        (data[key] for key in ("productList", "list", "records", "rows", "products")
+                         if isinstance(data.get(key), list)),
+                        None,
+                    )
+                    # The live API returns a null productList past its reported
+                    # total. A null list before that boundary remains invalid.
+                    total = data.get("total")
+                    if (
+                        rows is None and "productList" in data
+                        and data["productList"] is None
+                        and isinstance(total, int) and not isinstance(total, bool)
+                        and 0 <= total <= (params["currPage"] - 1) * params["pageSize"]
+                    ):
+                        rows = []
+                if rows is None or any(not isinstance(row, dict) for row in rows):
+                    raise SourcingError(
+                        "Invalid domestic candidate page", code="INVALID_RESPONSE"
+                    )
+                return rows
+
+            rows = fetch_page()
+            has_more = len(rows) >= params["pageSize"]
+            if not has_more:
+                params["currPage"] = 2
+                has_more = bool(fetch_page())
+            parts = [part_from_dict(row) for row in rows]
+            exact = [
+                part for part in parts
+                if part.mpn and part.mpn.strip().casefold() == identifier.casefold()
+            ]
+            if any(not part.lcsc_code for part in exact):
+                raise SourcingError(
+                    "Domestic result has no supplier identifier", code="INVALID_RESPONSE"
+                )
+            records = [
+                self.convert(self.client.get_part(part.lcsc_code, refresh=refresh))
+                for part in exact
+            ]
+            return SupplierPage(records=records, has_more=has_more)
+        finally:
+            bypass.reset(token)
 
     def close(self):
         pass  # The shared legacy server owns its session.

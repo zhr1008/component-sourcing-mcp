@@ -68,7 +68,7 @@ def search_entries(
             continue
         if package_n and package_n not in _norm_text(entry.get("package")):
             continue
-        if in_stock is not None and bool(entry.get("in_stock")) != in_stock:
+        if in_stock is not None and entry.get("in_stock") is not in_stock:
             continue
         if cad_review_required is not None and bool(entry.get("cad_review_required")) != cad_review_required:
             continue
@@ -250,7 +250,8 @@ def repair_library(
 
     This never regenerates CAD or downloads missing source assets. It only
     rebuilds CAD indexes/ownership and recreates flat mirrors from canonical
-    classified files.
+    classified files. A targeted CAD repair includes its shared group and reports
+    every changed member; unrelated component records remain untouched.
     """
     root_path = Path(root).expanduser().resolve()
     index = load_index(root_path)
@@ -259,23 +260,26 @@ def repair_library(
     unresolved: list[dict[str, Any]] = []
 
     if reconcile_cad:
-        before = {
-            code: (entry.get("cad_owner"), bool(entry.get("cad_shared")))
-            for code, entry in (index.get("parts") or {}).items()
-        }
+        before = {code: dict(entry) for code, entry in (index.get("parts") or {}).items()}
+        affected = set(before) if not wanted else set(wanted)
         rebuild_indexes(index)
-        for key in list((index.get("cad_index") or {}).keys()):
-            reconcile_cad_group(index, key)
+        for key, codes in (index.get("cad_index") or {}).items():
+            if not wanted or wanted.intersection(codes):
+                affected.update(codes)
+                reconcile_cad_group(index, key)
         for code, entry in (index.get("parts") or {}).items():
-            if wanted and code.upper() not in wanted:
+            if code not in affected:
+                index["parts"][code] = before[code]
                 continue
             after = (entry.get("cad_owner"), bool(entry.get("cad_shared")))
-            if before.get(code) != after:
+            previous = before[code]
+            if previous != entry:
                 actions.append({
                     "lcsc_code": code,
                     "action": "reconcile_cad_owner",
-                    "before": before.get(code),
+                    "before": (previous.get("cad_owner"), bool(previous.get("cad_shared"))),
                     "after": after,
+                    "changed_fields": sorted(key for key in set(previous) | set(entry) if previous.get(key) != entry.get(key)),
                 })
 
     for code, entry in sorted((index.get("parts") or {}).items()):
@@ -323,7 +327,6 @@ def repair_library(
         entry["archive"] = archive
 
     if not dry_run and actions:
-        rebuild_indexes(index)
         index_path = save_index(root_path, index)
     else:
         index_path = _index_path(root_path)

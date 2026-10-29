@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -77,6 +78,7 @@ def test_publication_requires_manual_main_dispatch_and_private_local_runner():
     assert "github.event.repository.private == true" in validation["jobs"]["validate"]["if"]
     assert release["jobs"]["publish"]["runs-on"] == "ubuntu-latest"
     assert "pull-requests" not in release["permissions"]
+    assert release["permissions"]["actions"] == "read"
     ci = workflow("tests.yml")
     assert ci["permissions"] == {"contents": "read"}
     assert ci["jobs"]["test"]["runs-on"] == "windows-latest"
@@ -112,6 +114,30 @@ def test_invalid_target_is_not_interpreted_as_git_option(bash, candidate_repo, t
     result, output = resolve(bash, folder, target, "v1.0.1")
     assert result.returncode != 0
     assert not output
+
+
+@pytest.mark.parametrize("state", ["success", "failure", "pending", "wrong_commit", "pull_request", "absent"])
+def test_release_requires_successful_push_ci_for_the_exact_target(bash, tmp_path, state):
+    target = "a" * 40
+    runs = [] if state == "absent" else [{
+        "headSha": "b" * 40 if state == "wrong_commit" else target,
+        "event": "pull_request" if state == "pull_request" else "push",
+        "status": "in_progress" if state == "pending" else "completed",
+        "conclusion": "failure" if state == "failure" else "success",
+    }]
+    fixture = tmp_path / "runs.json"
+    fixture.write_text(json.dumps(runs), encoding="utf-8")
+    calls = tmp_path / "calls.txt"
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-c", 'gh() { printf "%s\\n" "$*" > "$CALL_LOG"; cat "$CI_RUN_FIXTURE"; };\n' + release_script("Require successful CI for target commit")],
+        cwd=tmp_path,
+        env={**os.environ, "TARGET_SHA":target, "GITHUB_REPOSITORY":"fixture/project", "RUNNER_TEMP":tmp_path.as_posix(), "CI_RUN_FIXTURE":fixture.as_posix(), "CALL_LOG":calls.as_posix()},
+        text=True, capture_output=True, timeout=20,
+    )
+    assert (result.returncode == 0) is (state == "success"), result.stderr
+    command = calls.read_text(encoding="utf-8")
+    assert "--workflow tests.yml" in command and "--event push" in command
+    assert "--commit " + target in command and "--repo fixture/project" in command
 
 
 @pytest.mark.parametrize("missing_checksum", [False, True])

@@ -76,19 +76,34 @@ def _dedupe_existing(paths: Iterable[Path]) -> list[Path]:
     return rows
 
 
-def _source_candidates(root: Path, entry: dict[str, Any], kind: str) -> tuple[list[Path], list[str], bool]:
+def _source_candidates(root: Path, entry: dict[str, Any], kind: str) -> tuple[list[Path], list[str], list[str], bool]:
     archive = entry.get("archive") or {}
     assets = archive.get("assets") or {}
     row = assets.get(kind) or {}
     referenced: list[Path] = []
-    missing: list[str] = []
+    views: dict[str, list[Path]] = {"classified": [], "flat": []}
     for view in ("classified", "flat"):
         for raw in row.get(view) or []:
             if not str(raw).strip():
                 continue
             path = _resolve(root, raw)
+            views[view].append(path)
             if path.is_file():
                 referenced.append(path)
+
+    missing: list[str] = []
+    recoverable: list[str] = []
+    for view, paths in views.items():
+        other = views["flat" if view == "classified" else "classified"]
+        for path in paths:
+            if path.is_file():
+                continue
+            # Archive mirrors are written with identical names in opposite views.
+            # Ambiguous duplicate names and reports cannot establish a pairing.
+            peers = {candidate for candidate in other if candidate.name == path.name}
+            same_view = {candidate for candidate in paths if candidate.name == path.name}
+            if kind != "reports" and len(same_view) == 1 and len(peers) == 1 and next(iter(peers)).is_file():
+                recoverable.append(str(path))
             else:
                 missing.append(str(path))
 
@@ -105,7 +120,7 @@ def _source_candidates(root: Path, entry: dict[str, Any], kind: str) -> tuple[li
                     case_used = True
                     referenced.extend(case_rows)
 
-    return _dedupe_existing(referenced), missing, case_used
+    return _dedupe_existing(referenced), missing, recoverable, case_used
 
 
 def _numbered_target(directory: Path, basename: str, source: Path, kind: str, index: int) -> Path:
@@ -237,7 +252,7 @@ def plan_library_migration(
         case_sources: list[str] = []
 
         for kind in _ASSET_KINDS:
-            sources, missing_refs, case_used = _source_candidates(root_path, entry, kind)
+            sources, missing_refs, recoverable_refs, case_used = _source_candidates(root_path, entry, kind)
             if case_used:
                 case_sources.append(kind)
             classified, flat, kind_actions, kind_blockers = _targets_for_kind(layout, kind, sources)
@@ -245,21 +260,20 @@ def plan_library_migration(
             file_actions.extend(kind_actions)
             blockers.extend(kind_blockers)
 
+            if recoverable_refs:
+                warnings.append({
+                    "kind": "missing_legacy_reference_recoverable",
+                    "asset_kind": kind,
+                    "paths": recoverable_refs,
+                    "message": "missing legacy references have matching local mirrors in the other archive view",
+                })
             if missing_refs:
-                if sources:
-                    warnings.append({
-                        "kind": "missing_legacy_reference_recoverable",
-                        "asset_kind": kind,
-                        "paths": missing_refs,
-                        "message": "some legacy references are missing, but another local source can rebuild the canonical view",
-                    })
-                else:
-                    blockers.append({
-                        "kind": "referenced_asset_missing",
-                        "asset_kind": kind,
-                        "paths": missing_refs,
-                        "message": "legacy index references local assets that cannot be found; migration will not drop them silently",
-                    })
+                blockers.append({
+                    "kind": "referenced_asset_missing",
+                    "asset_kind": kind,
+                    "paths": missing_refs,
+                    "message": "legacy index references local assets that cannot be found; migration will not drop them silently",
+                })
 
             if kind in {"schlib", "pcblib"}:
                 claimed = bool((entry.get("altium") or {}).get(f"has_{kind}"))

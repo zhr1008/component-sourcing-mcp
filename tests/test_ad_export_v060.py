@@ -3,9 +3,25 @@ from __future__ import annotations
 import csv
 import json
 from pathlib import Path
+import pytest
 
-from szlcsc_mcp.ad_catalog import empty_catalog, save_ad_catalog
+from szlcsc_mcp.ad_catalog import empty_catalog, save_ad_catalog, export_ad_catalog
 from szlcsc_mcp.ad_export import export_ad_catalog_complete
+
+
+@pytest.mark.parametrize("value", ["=1+1", "+1+1", "-1+1", "@SUM(1)", " \t=1+1", "\r=1+1", "\n=1+1", "safe-symbol"])
+@pytest.mark.parametrize("exporter", [export_ad_catalog_complete, export_ad_catalog])
+def test_catalog_csv_treats_untrusted_fields_as_text_and_keeps_json(tmp_path, value, exporter):
+    root = tmp_path / "catalog"
+    catalog = empty_catalog()
+    catalog["symbols"]["symbol:1"] = {"asset_id":"symbol:1", "name":value}
+    save_ad_catalog(root, catalog)
+    result = exporter(root, output_dir=tmp_path / "exports")
+    with Path(result["files"]["csv"]).open(encoding="utf-8-sig", newline="") as file:
+        row = next(csv.DictReader(file))
+    assert row["symbol"] == (value if value == "safe-symbol" else "'" + value)
+    original = json.loads(Path(result["files"]["json"]).read_text(encoding="utf-8"))
+    assert original["components"][0]["symbol"] == value
 
 
 def test_complete_export_keeps_full_szlcsc_parameters_and_locations(tmp_path):

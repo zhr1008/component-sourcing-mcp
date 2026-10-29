@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+## 0.8.0-rc.2
+
+- Invalidate stale CAD verification after changed symbol, footprint or source evidence; retry failed scans and respect explicit footprint-library identities.
+- Apply domestic MPN manufacturer/package filters before resolving ambiguity, preserve unknown stock, and constrain library repair to selected/shared groups with complete action reporting.
+- Block migrations that cannot prove each missing asset has a matching mirror. Strengthen Datasheet identity/package evidence and validate existing PDF files before reuse.
+- Expose bounded synchronization pagination and request fresh stock/price metadata. Escape formula-like CSV text across inventory and catalog exports while retaining raw JSON values.
+- Make both installers target their own project, stop on native-command failures, and require successful exact-commit push CI before publication.
+- Add regression tests and record the comprehensive audit, including remaining optional upstream dependency limitations.
+
 ## 0.8.0-rc.1
 
 - Add supplier-neutral component identities, original-currency decimal price breaks, packaging offers and quantity quotes. Keep manufacturer/MPN/package ambiguity, missing inventory, retail/assembly pools and currencies explicit.

@@ -5,7 +5,12 @@ from pathlib import Path
 import pytest
 
 from szlcsc_mcp.ad_catalog import empty_catalog, load_ad_catalog, save_ad_catalog
-from szlcsc_mcp.ad_enrichment import enrich_ad_catalog, record_datasheet_verification, resolve_symbol_part
+from szlcsc_mcp.ad_enrichment import (
+    enrich_ad_catalog,
+    record_datasheet_verification,
+    resolve_symbol_part,
+    sync_ad_catalog_datasheets,
+)
 from szlcsc_mcp.library_base import LibraryError
 from szlcsc_mcp.models import Part, PriceTier
 
@@ -214,3 +219,189 @@ def test_datasheet_pin_pad_and_mechanical_evidence_can_reach_verified(tmp_path):
     })
     assert result["status"] == "verified"
     assert result["authority"] == "datasheet"
+
+
+@pytest.mark.parametrize("missing", ["resolved_mpn", "evidence_mpn", "resolved_package", "evidence_package"])
+def test_verified_requires_resolved_and_datasheet_identity(tmp_path, missing):
+    symbol = _symbol(c_code="C5291487")
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": "C5291487", "mpn": "TPR3333-S3TR", "package": "SOT-23G-3"}
+    evidence = {
+        "source": "datasheet", "pages": [4], "mpn": "TPR3333-S3TR", "package": "SOT-23G-3",
+        "pins": symbol["pins"], "terminal_numbers": ["1", "2", "3"],
+        "mechanical_checks": [{"name": "pitch", "expected": "0.95mm", "actual": "0.95mm", "pass": True, "page": 4}],
+    }
+    owner, key = missing.split("_", 1)
+    (symbol["enrichment"] if owner == "resolved" else evidence).pop(key)
+    _catalog(tmp_path, symbol)
+    result = record_datasheet_verification(tmp_path, asset_id="symbol:1", evidence=evidence)
+    assert result["status"] == "insufficient_evidence"
+
+
+@pytest.mark.parametrize("conflict", ["resolved_package", "footprint_package", "identity_hint"])
+def test_package_identity_conflicts_cannot_verify(tmp_path, conflict):
+    symbol = _symbol(c_code="C5291487")
+    if conflict == "identity_hint":
+        symbol["identity_hints"]["package"] = "QFN-3"
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": "C5291487", "mpn": "TPR3333-S3TR", "package": "SOT-23G-3"}
+    _catalog(tmp_path, symbol)
+    catalog = load_ad_catalog(tmp_path)
+    if conflict == "footprint_package":
+        catalog["footprints"]["footprint:1"]["package"] = "QFN-3"
+        save_ad_catalog(tmp_path, catalog)
+    evidence = {
+        "source": "datasheet", "pages": [4], "mpn": "TPR3333-S3TR",
+        "package": "QFN-3" if conflict == "resolved_package" else "SOT-23G-3",
+        "pins": symbol["pins"], "terminal_numbers": ["1", "2", "3"],
+        "mechanical_checks": [{"name": "pitch", "expected": "0.95mm", "actual": "0.95mm", "pass": True, "page": 4}],
+    }
+    result = record_datasheet_verification(tmp_path, asset_id="symbol:1", evidence=evidence)
+    assert result["status"] == "failed"
+    assert any("package_conflict" in issue["kind"] for issue in result["issues"])
+
+
+def test_changed_datasheet_url_requires_download_even_after_repeated_refresh(tmp_path):
+    symbol = _symbol(c_code="C5291487")
+    old_url = "https://atta.szlcsc.com/old.pdf"
+    new_url = "https://atta.szlcsc.com/new.pdf"
+    old_path = tmp_path / "datasheets" / "C5291487-TPR3333-S3TR.pdf"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b"%PDF-old")
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": "C5291487", "mpn": "TPR3333-S3TR", "package": "SOT-23G-3", "datasheet_url": old_url, "datasheet_path": str(old_path)}
+    symbol["verification"] = {"status": "verified", "authority": "datasheet", "datasheet_url": old_url, "evidence": {"pages": [4]}}
+    _catalog(tmp_path, symbol)
+    part = _part()
+    part.datasheet_url = new_url
+    client = FakeClient([part])
+    enrich_ad_catalog(client, tmp_path, force=True)
+    verification = load_ad_catalog(tmp_path)["symbols"]["symbol:1"]["verification"]
+    assert verification["status"] == "stale_datasheet_changed"
+    assert verification["datasheet_url"] == old_url
+    assert verification["evidence"] == {"pages": [4]}
+    enrich_ad_catalog(client, tmp_path, force=True)
+    assert not load_ad_catalog(tmp_path)["symbols"]["symbol:1"]["enrichment"].get("datasheet_path")
+
+    class Response:
+        status_code = 200
+        url = new_url
+        def __init__(self): self.headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def raise_for_status(self): pass
+        def iter_content(self, *args): yield b"%PDF-new"
+
+    class Session:
+        def __init__(self): self.urls = []
+        def get(self, url, **kwargs):
+            self.urls.append(url)
+            return Response()
+
+    client.session = Session()
+    client.timeout = 1
+    result = sync_ad_catalog_datasheets(client, tmp_path)
+    assert result["ready"] == 1
+    assert client.session.urls == [new_url]
+    new_path = Path(result["results"][0]["path"])
+    assert new_path != old_path
+    assert new_path.read_bytes() == b"%PDF-new"
+    assert old_path.read_bytes() == b"%PDF-old"
+    sync_ad_catalog_datasheets(client, tmp_path)
+    assert client.session.urls == [new_url]
+    enrich_ad_catalog(client, tmp_path, force=True)
+    state = load_ad_catalog(tmp_path)["symbols"]["symbol:1"]["enrichment"]
+    assert state["datasheet_path"] == str(new_path)
+    assert not state.get("datasheet_download_required")
+
+
+def test_changed_datasheet_source_failed_download_can_retry(tmp_path):
+    symbol = _symbol(c_code="C5291487")
+    old_path = tmp_path / "datasheets" / "C5291487-TPR3333-S3TR.pdf"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b"%PDF-old")
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": "C5291487", "mpn": "TPR3333-S3TR", "package": "SOT-23G-3", "datasheet_url": "https://atta.szlcsc.com/old.pdf", "datasheet_path": str(old_path)}
+    _catalog(tmp_path, symbol)
+    part = _part()
+    part.datasheet_url = "https://atta.szlcsc.com/new.pdf"
+    client = FakeClient([part])
+    enrich_ad_catalog(client, tmp_path, force=True)
+
+    class Response:
+        status_code = 200
+        url = part.datasheet_url
+        body = b"bad"
+        def __init__(self): self.headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def raise_for_status(self): pass
+        def iter_content(self, *args): yield self.body
+
+    class Session:
+        def get(self, url, **kwargs): return Response()
+
+    client.session = Session()
+    client.timeout = 1
+    assert sync_ad_catalog_datasheets(client, tmp_path)["errors"] == 1
+    state = load_ad_catalog(tmp_path)["symbols"]["symbol:1"]["enrichment"]
+    assert state["datasheet_download_required"] is True
+    assert not state.get("datasheet_path")
+    assert old_path.read_bytes() == b"%PDF-old"
+    Response.body = b"%PDF-new"
+    assert sync_ad_catalog_datasheets(client, tmp_path)["ready"] == 1
+
+
+def test_unchanged_datasheet_url_and_identity_preserve_path(tmp_path):
+    symbol = _symbol(c_code="C5291487")
+    part = _part()
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": part.lcsc_code, "mpn": part.mpn, "package": part.package, "datasheet_url": part.datasheet_url, "datasheet_path": "existing.pdf"}
+    symbol["verification"] = {"status": "verified", "datasheet_url": part.datasheet_url, "evidence": {"pages": [4]}}
+    _catalog(tmp_path, symbol)
+    enrich_ad_catalog(FakeClient([part]), tmp_path, force=True)
+    updated = load_ad_catalog(tmp_path)["symbols"]["symbol:1"]
+    assert updated["enrichment"]["datasheet_path"] == "existing.pdf"
+    assert updated["verification"]["status"] == "verified"
+    assert updated["verification"]["evidence"] == {"pages": [4]}
+
+
+def test_prior_verification_source_disagreement_does_not_preserve_path(tmp_path):
+    symbol = _symbol(c_code="C5291487")
+    part = _part()
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": part.lcsc_code, "mpn": part.mpn, "package": part.package, "datasheet_url": part.datasheet_url, "datasheet_path": "old.pdf"}
+    symbol["verification"] = {"status": "verified", "datasheet_url": "https://atta.szlcsc.com/previous.pdf"}
+    _catalog(tmp_path, symbol)
+    enrich_ad_catalog(FakeClient([part]), tmp_path, force=True)
+    updated = load_ad_catalog(tmp_path)["symbols"]["symbol:1"]
+    assert updated["verification"]["status"] == "stale_datasheet_changed"
+    assert not updated["enrichment"].get("datasheet_path")
+    assert updated["enrichment"]["datasheet_download_required"] is True
+
+
+def test_datasheet_sync_invalidates_disagreeing_verified_source(tmp_path):
+    symbol = _symbol(c_code="C5291487")
+    part = _part()
+    old_path = tmp_path / "datasheets" / "C5291487-TPR3333-S3TR.pdf"
+    old_path.parent.mkdir(parents=True)
+    old_path.write_bytes(b"%PDF-old")
+    symbol["enrichment"] = {"status": "resolved", "lcsc_code": part.lcsc_code, "mpn": part.mpn, "package": part.package, "datasheet_url": part.datasheet_url, "datasheet_path": str(old_path)}
+    symbol["verification"] = {"status": "verified", "datasheet_url": "https://atta.szlcsc.com/previous.pdf", "evidence": {"pages": [4]}}
+    _catalog(tmp_path, symbol)
+
+    class Response:
+        status_code = 200
+        url = part.datasheet_url
+        def __init__(self): self.headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *args): return False
+        def raise_for_status(self): pass
+        def iter_content(self, *args): yield b"%PDF-new"
+
+    class Session:
+        def get(self, url, **kwargs): return Response()
+
+    client = FakeClient([part])
+    client.session = Session()
+    client.timeout = 1
+    result = sync_ad_catalog_datasheets(client, tmp_path)
+    updated = load_ad_catalog(tmp_path)["symbols"]["symbol:1"]
+    assert updated["verification"]["status"] == "stale_datasheet_changed"
+    assert updated["verification"]["evidence"] == {"pages": [4]}
+    assert Path(result["results"][0]["path"]).read_bytes() == b"%PDF-new"
+    assert old_path.read_bytes() == b"%PDF-old"

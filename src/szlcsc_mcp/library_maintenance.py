@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .export_utils import csv_cell
 from .library_base import LibraryError, _sha256, cad_key, load_index, summarize_index
 from .models import Part
 
@@ -193,7 +194,7 @@ def export_library(
         with csv_path.open("w", encoding="utf-8-sig", newline="") as fh:
             writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore")
             writer.writeheader()
-            writer.writerows(rows)
+            writer.writerows({key: csv_cell(value) for key, value in row.items()} for row in rows)
         files["csv"] = str(csv_path)
 
     return {

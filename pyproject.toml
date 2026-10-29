@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "component-sourcing-mcp"
-version = "0.8.0-rc.1"
+version = "0.8.0-rc.2"
 description = "MCP server for SZLCSC/JLCPCB, Mouser and DigiKey component sourcing, quantity pricing, datasheets and EasyEDA/Altium library workflows."
 readme = "README.md"
 requires-python = ">=3.11"

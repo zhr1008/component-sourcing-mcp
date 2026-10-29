@@ -1,5 +1,8 @@
 import json
+import copy
 from pathlib import Path
+
+import pytest
 
 from szlcsc_mcp.library import (
     audit_library,
@@ -155,3 +158,36 @@ def test_library_repair_reconciles_invalid_cad_owner(tmp_path):
     assert entry["cad_owner"] == "C60"
     assert entry["cad_shared"] is True
     assert any(a["action"] == "reconcile_cad_owner" for a in result["actions"])
+
+
+@pytest.mark.parametrize("requested,expected", [(True, ["C1"]), (False, ["C2"]), (None, ["C1", "C2", "C3"])])
+def test_library_stock_filter_preserves_unknown(requested, expected):
+    index = {"parts": {
+        code: {"lcsc_code": code, "in_stock": stock}
+        for code, stock in (("C1", True), ("C2", False), ("C3", None))
+    }}
+    assert [r["lcsc_code"] for r in search_entries(index, in_stock=requested)] == expected
+
+
+def test_targeted_repair_preserves_unrelated_records_and_reports_linked_changes(tmp_path):
+    root = tmp_path / "lib"
+    for code, mpn in (("C1", "SHARED"), ("C2", "OTHER"), ("C3", "SHARED")):
+        upsert_part(root, make_part(code, mpn=mpn, category="fixture"))
+    index = load_index(root)
+    for entry in index["parts"].values():
+        entry["cad_owner"] = "C999"
+        entry["cad_shared"] = True
+    # Rebuilding derived indexes must not populate out-of-scope record fields.
+    index["parts"]["C2"].pop("cad_key", None)
+    save_index(root, index)
+    before = (root / "library-index.json").read_bytes()
+    unrelated = copy.deepcopy(index["parts"]["C2"])
+    preview = repair_library(root, identifiers=["C1"], repair_flat=False, dry_run=True)
+    assert (root / "library-index.json").read_bytes() == before
+    assert {a["lcsc_code"] for a in preview["actions"]} == {"C1", "C3"}
+    result = repair_library(root, identifiers=["C1"], repair_flat=False, dry_run=False)
+    after = load_index(root)
+    assert after["parts"]["C2"] == unrelated
+    assert after["parts"]["C1"]["cad_owner"] == "C1"
+    assert after["parts"]["C3"]["cad_owner"] == "C1"
+    assert result["actions"] == preview["actions"]

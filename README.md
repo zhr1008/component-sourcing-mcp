@@ -2,7 +2,7 @@
 
 用于电子元器件选型、库存/阶梯价查询、资料下载和 Altium 器件库管理的 MCP Server，可接入 Codex 等 MCP 客户端。
 
-当前版本为 **v0.8.0-rc.1（预发布）**，Python 包版本为 `0.8.0rc1`。当前实现 **49 个 Tool、两项 Resource 和两项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
+当前版本为 **v0.8.0-rc.2（预发布）**，Python 包版本为 `0.8.0rc2`。当前实现 **49 个 Tool、两项 Resource 和两项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
 
 | 平台或工作流 | 当前状态 |
 |---|---|
@@ -32,7 +32,7 @@ py -3.12 -m venv .venv
 & '.\.venv\Scripts\python.exe' -X utf8 -c "from importlib.metadata import version; print(version('component-sourcing-mcp'))"
 ```
 
-版本检查应显示 `0.8.0rc1`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
+版本检查应显示 `0.8.0rc2`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
 
 ## 接入 Codex
 
@@ -87,6 +87,10 @@ szlcsc_get_pricing(identifier="C2040", quantity=10, refresh=true)
 
 错误使用 MCP `isError=true` 和结构化 `error`，包含 `code`、`message`、`retryable` 等字段。部分成功的批量结果还需检查 `complete` 和子项状态。服务不绕过验证码、登录、签名或访问控制。
 
+`szlcsc_library_sync` 和 `szlcsc_library_sync_preview` 会刷新采购数据，每次最多处理 500 项。
+读取 `has_more`、`remaining_count` 和 `next_offset`，把 `next_offset` 作为下次的 `offset` 继续；
+分页期间保持库成员或显式目标列表不变。CSV 导出会把公式形式的文本转成字面文本，JSON 保留原值。
+
 ## Altium 与工程核验
 
 默认安装提供查料、报价、资料和归档功能，不安装 Altium 解析器。Altium 集成要求 Python 3.12+，`altium-monkey` 用于读取/保存 SchLib/PcbLib，可显式安装：
@@ -120,7 +124,7 @@ Datasheet 是 pin/package/footprint/electrical 最终判断依据。自动 smoke
 
 公共 CI 使用 GitHub-hosted runner，并检查完整可达历史的隐私规则。不要提交真实凭据、私人目录、原始日志或用户库。贡献与漏洞报告见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [SECURITY.md](SECURITY.md)。
 
-本版实现和验证范围见 [rc.1 记录](docs/test-reports/v0.8.0-rc.1-automated.md)。原始公开快照的 203 项验证保留在 [rc.4 记录](docs/test-reports/v0.7.0-rc.4-automated.md)。未提供凭据或上游受限的调用不计为授权联网成功。
+本版修复范围见 [全面检查记录](docs/audits/comprehensive-2026-10-29.md)，验证见 [rc.2 记录](docs/test-reports/v0.8.0-rc.2-automated.md)。多供应商初版和原始公开快照的验证分别保留在 [rc.1 记录](docs/test-reports/v0.8.0-rc.1-automated.md)和 [rc.4 记录](docs/test-reports/v0.7.0-rc.4-automated.md)。未提供凭据或上游受限的调用不计为授权联网成功。
 
 ## 许可与数据来源
 

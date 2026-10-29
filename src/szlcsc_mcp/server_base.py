@@ -6,9 +6,10 @@ import argparse
 import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
+from pydantic import Field
 
 from .altium import (
     AltiumImportError,
@@ -61,6 +62,27 @@ eda_client = EasyEDAAssetClient(
     cache=client.cache, timeout=client.timeout, request_delay=client.request_delay, retries=client.retries
 )
 _C_CODE_RE = re.compile(r"^C\d+$", re.IGNORECASE)
+SyncOffset = Annotated[int, Field(strict=True, ge=0, description="Zero-based target offset")]
+SyncLimit = Annotated[int, Field(strict=True, ge=1, le=500, description="Maximum targets per call, 1–500")]
+
+
+def _sync_page(targets: list[str], offset: int, limit: int) -> tuple[list[str], dict[str, Any]]:
+    # Direct Python callers do not pass through FastMCP's Pydantic validation.
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a non-negative integer")
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError("limit must be an integer between 1 and 500")
+    page = targets[offset:offset + limit]
+    end = min(offset + len(page), len(targets))
+    remaining = len(targets) - end
+    return page, {
+        "offset": offset,
+        "limit": limit,
+        "total_count": len(targets),
+        "remaining_count": remaining,
+        "has_more": remaining > 0,
+        "next_offset": end if remaining else None,
+    }
 
 
 def _json(value: Any) -> str:
@@ -579,17 +601,24 @@ def szlcsc_library_sync(
     library_root: str = "szlcsc-library",
     identifiers: list[str] | None = None,
     dedupe_cad: bool = True,
+    offset: SyncOffset = 0,
+    limit: SyncLimit = 500,
 ) -> str:
-    """刷新库内价格、库存、Datasheet 等采购元数据；不会因这些变化重建 CAD，MPN/封装变化会标记复核。"""
+    """刷新采购元数据并绕过 TTL 缓存；不会自动重建 CAD，MPN/封装变化会标记复核。
+
+    每次最多处理 limit 项；如 has_more 为 true，用 next_offset 继续，并保持目标列表不变。
+    计数按目标处理进度计算，逐项错误请检查 results。
+    """
     try:
         index = load_index(library_root)
     except LibraryError as exc:
         return _json({"error": exc})
     targets = identifiers or sorted((index.get("parts") or {}).keys())
+    page, pagination = _sync_page(targets, offset, limit)
     results: list[dict[str, Any]] = []
-    for identifier in targets[:500]:
+    for identifier in page:
         try:
-            part = client.get_part(identifier)
+            part = client.get_part(identifier, refresh=True)
             code = str(part.lcsc_code or "").upper()
             if not code:
                 raise SZLCSCError(f"No LCSC C-code resolved for {identifier!r}")
@@ -613,6 +642,7 @@ def szlcsc_library_sync(
             results.append({"identifier": identifier, "ok": False, "error": str(exc)})
     final = load_index(library_root)
     return _json({
+        **pagination,
         "count": len(results),
         "changed": sum(1 for row in results if row.get("changes")),
         "results": results,

@@ -1,6 +1,6 @@
 # Dependency security record
 
-Review date: 2026-10-24. Next review: 2026-11-07, or on an upstream Altium update.
+Review date: 2026-10-29. Next review: 2026-11-07, or on an upstream Altium update.
 
 The default installation excludes Altium parsing/writing dependencies. Install
 the `[altium]` extra explicitly only after reviewing the constraints below.
@@ -16,6 +16,12 @@ A separate, fresh default sourcing environment was installed and audited after
 this change: `pip-audit` reported **no known vulnerabilities**. Altium, Pillow
 and lxml were confirmed absent. The unpublished project package is not indexed
 by PyPI's vulnerability service; source tests and review cover it separately.
+
+The 2026-10-29 follow-up verified that the newest available `altium-monkey`
+release is still 2026.9.22. A fresh audit of the full development environment
+reported 41 advisory records in its two pinned dependencies (lxml and Pillow);
+the patched pip version no longer appears. This confirms the optional risk
+remains; it does not establish a compatible upstream fix.
 
 | Dependency | Constraint and risk | Resolution status |
 |---|---|---|

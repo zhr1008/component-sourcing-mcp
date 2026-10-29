@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from .ad_catalog import load_ad_catalog, save_ad_catalog
+from .ad_catalog import VERIFIED_EVIDENCE_STATUSES, load_ad_catalog, save_ad_catalog
 from .client import SZLCSCClient, SZLCSCError
 from .downloader import _download
 from .library_base import LibraryError
@@ -163,9 +164,12 @@ def enrich_ad_catalog(
         result["last_checked_at"] = _now()
         old_identity = (_norm(existing.get("lcsc_code")), _norm(existing.get("mpn")), _norm(existing.get("package")))
         new_identity = (_norm(result.get("lcsc_code")), _norm(result.get("mpn")), _norm(result.get("package")))
-        if existing and old_identity != new_identity:
-            verification = symbol.get("verification") or {}
-            if verification.get("status") in {"verified", "pins_verified", "footprint_numbering_verified"}:
+        verification = symbol.get("verification") or {}
+        previous_source = verification.get("datasheet_url") or existing.get("datasheet_url")
+        source_changed = bool(previous_source) and previous_source != result.get("datasheet_url")
+        verification_current = verification.get("status") in VERIFIED_EVIDENCE_STATUSES
+        if verification_current:
+            if existing and old_identity != new_identity:
                 verification = {
                     **verification,
                     "status": "stale_identity_changed",
@@ -173,9 +177,24 @@ def enrich_ad_catalog(
                     "reason": "resolved C-code/MPN/package changed during enrichment",
                 }
                 symbol["verification"] = verification
+            elif source_changed:
+                symbol["verification"] = {
+                    **verification,
+                    "status": "stale_datasheet_changed",
+                    "stale_at": _now(),
+                    "reason": "datasheet URL changed during enrichment",
+                }
         # Preserve local datasheet path across a metadata refresh when URL/identity is unchanged.
-        if existing.get("datasheet_path") and old_identity == new_identity:
+        same_source = existing.get("datasheet_url") == result.get("datasheet_url")
+        path_source = existing.get("datasheet_path_url")
+        path_source_matches = not path_source or path_source == result.get("datasheet_url")
+        verification_source_changed = verification_current and source_changed
+        if existing.get("datasheet_path") and old_identity == new_identity and same_source and path_source_matches and not verification_source_changed:
             result["datasheet_path"] = existing.get("datasheet_path")
+            if existing.get("datasheet_path_url"):
+                result["datasheet_path_url"] = existing["datasheet_path_url"]
+        if existing.get("datasheet_download_required") or verification_source_changed or (existing and (not same_source or not path_source_matches)):
+            result["datasheet_download_required"] = True
         symbol["enrichment"] = result
         rows.append({
             "asset_id": asset_id,
@@ -212,7 +231,7 @@ def sync_ad_catalog_datasheets(
     out = root / "datasheets"
     out.mkdir(parents=True, exist_ok=True)
     wanted = {str(item) for item in (symbol_ids or []) if str(item)}
-    downloaded_by_code: dict[str, str] = {}
+    downloaded_by_source: dict[tuple[str, str], str] = {}
     results: list[dict[str, Any]] = []
 
     for asset_id, symbol in sorted(catalog.get("symbols", {}).items()):
@@ -223,12 +242,9 @@ def sync_ad_catalog_datasheets(
             continue
         code = str(enrichment["lcsc_code"]).upper()
         mpn = str(enrichment.get("mpn") or "unknown").replace("/", "_").replace("\\", "_")
-        target = out / f"{code}-{mpn}.pdf"
-        if code in downloaded_by_code:
-            enrichment["datasheet_path"] = downloaded_by_code[code]
-            results.append({"asset_id": asset_id, "lcsc_code": code, "status": "shared", "path": downloaded_by_code[code]})
-            continue
+        legacy_target = out / f"{code}-{mpn}.pdf"
         url = enrichment.get("datasheet_url")
+        source_was_missing = not url
         if not url:
             try:
                 part = client.get_part(code)
@@ -240,16 +256,53 @@ def sync_ad_catalog_datasheets(
         if not url:
             results.append({"asset_id": asset_id, "lcsc_code": code, "status": "no_datasheet"})
             continue
+        url = str(url)
+        verification = symbol.get("verification") or {}
+        verified_source = verification.get("datasheet_url")
+        verification_current = verification.get("status") in VERIFIED_EVIDENCE_STATUSES
+        source_conflict = verification_current and verified_source and verified_source != url
+        path_source = enrichment.get("datasheet_path_url")
+        if source_conflict:
+            symbol["verification"] = {
+                **verification,
+                "status": "stale_datasheet_changed",
+                "stale_at": _now(),
+                "reason": "datasheet URL changed before download",
+            }
+        if source_conflict or (path_source and path_source != url):
+            enrichment.pop("datasheet_path", None)
+            enrichment.pop("datasheet_path_url", None)
+            enrichment["datasheet_download_required"] = True
+        source_key = (code, url)
+        if source_key in downloaded_by_source:
+            downloaded_path = downloaded_by_source[source_key]
+            enrichment["datasheet_path"] = downloaded_path
+            enrichment["datasheet_path_url"] = url
+            enrichment.pop("datasheet_download_required", None)
+            results.append({"asset_id": asset_id, "lcsc_code": code, "status": "shared", "path": downloaded_path})
+            continue
+        path_url = enrichment.get("datasheet_path_url")
+        legacy_trusted = (
+            enrichment.get("datasheet_path") == str(legacy_target)
+            and (not path_url or path_url == url)
+            and not source_was_missing
+            and not enrichment.get("datasheet_download_required")
+        )
+        source_hash = hashlib.sha256(url.encode("utf-8")).hexdigest()[:20]
+        target = legacy_target if legacy_trusted else out / f"{code}-{mpn}-{source_hash}.pdf"
         try:
-            _download(client.session, str(url), target, client.timeout, pdf=True, force=force)
+            download_required = force or source_was_missing or enrichment.get("datasheet_download_required")
+            _download(client.session, url, target, client.timeout, pdf=True, force=bool(download_required))
         except Exception as exc:
             results.append({"asset_id": asset_id, "lcsc_code": code, "status": "error", "error": str(exc)})
             continue
         path_str = str(target)
         enrichment["datasheet_path"] = path_str
+        enrichment["datasheet_path_url"] = url
+        enrichment.pop("datasheet_download_required", None)
         enrichment["datasheet_downloaded_at"] = _now()
         enrichment["datasheet_evidence_status"] = "pending_agent_review"
-        downloaded_by_code[code] = path_str
+        downloaded_by_source[source_key] = path_str
         results.append({"asset_id": asset_id, "lcsc_code": code, "status": "ready", "path": path_str})
 
     save_ad_catalog(catalog_root, catalog)
@@ -363,8 +416,19 @@ def record_datasheet_verification(
     issues: list[dict[str, Any]] = []
     resolved_mpn = _norm(enrichment.get("mpn"))
     evidence_mpn = _norm(evidence.get("mpn"))
+    resolved_package = _norm(enrichment.get("package"))
+    evidence_package = _norm(evidence.get("package"))
+    if not resolved_mpn or not evidence_mpn:
+        issues.append({"kind": "insufficient_identity_mpn_evidence"})
+    if not resolved_package or not evidence_package:
+        issues.append({"kind": "insufficient_package_evidence"})
     if resolved_mpn and evidence_mpn and resolved_mpn != evidence_mpn:
         issues.append({"kind": "identity_mpn_conflict", "resolved": enrichment.get("mpn"), "datasheet": evidence.get("mpn")})
+    if resolved_package and evidence_package and resolved_package != evidence_package:
+        issues.append({"kind": "identity_package_conflict", "resolved": enrichment.get("package"), "datasheet": evidence.get("package")})
+    hint_package = (symbol.get("identity_hints") or {}).get("package")
+    if _norm(hint_package) and evidence_package and _norm(hint_package) != evidence_package:
+        issues.append({"kind": "hint_package_conflict", "hint": hint_package, "datasheet": evidence.get("package")})
 
     datasheet_pins = _pin_map(list(evidence.get("pins") or []))
     symbol_pins = _pin_map(list(symbol.get("pins") or []))
@@ -395,6 +459,9 @@ def record_datasheet_verification(
     for link in linked:
         fp_id = (link.get("candidates") or [None])[0]
         footprint = (catalog.get("footprints") or {}).get(fp_id) or {}
+        footprint_package = _norm(footprint.get("package"))
+        if footprint_package and evidence_package and footprint_package != evidence_package:
+            issues.append({"kind": "footprint_package_conflict", "footprint_asset_id": fp_id, "footprint": footprint.get("package"), "datasheet": evidence.get("package")})
         pads = {
             str(row.get("number") or "").strip().casefold()
             for row in footprint.get("pads") or []
@@ -433,7 +500,8 @@ def record_datasheet_verification(
     mechanical_complete = bool(mechanical_checks) and not incomplete_mechanical and not missing_page_checks
     final_verified = (
         not any(item["kind"] in {
-            "identity_mpn_conflict", "insufficient_datasheet_pin_evidence", "symbol_pin_number_mismatch",
+            "identity_mpn_conflict", "identity_package_conflict", "hint_package_conflict", "footprint_package_conflict",
+            "insufficient_identity_mpn_evidence", "insufficient_package_evidence", "insufficient_datasheet_pin_evidence", "symbol_pin_number_mismatch",
             "footprint_pad_number_mismatch", "no_uniquely_resolved_footprint_link",
             "mechanical_datasheet_check_failed", "mechanical_check_missing_page",
         } for item in issues)
@@ -444,8 +512,10 @@ def record_datasheet_verification(
     )
     if final_verified:
         status = "verified"
-    elif any(item["kind"] in {"symbol_pin_number_mismatch", "footprint_pad_number_mismatch", "mechanical_datasheet_check_failed", "identity_mpn_conflict"} for item in issues):
+    elif any(item["kind"] in {"symbol_pin_number_mismatch", "footprint_pad_number_mismatch", "mechanical_datasheet_check_failed", "identity_mpn_conflict", "identity_package_conflict", "hint_package_conflict", "footprint_package_conflict"} for item in issues):
         status = "failed"
+    elif any(item["kind"] in {"insufficient_identity_mpn_evidence", "insufficient_package_evidence"} for item in issues):
+        status = "insufficient_evidence"
     elif pin_numbers_match and footprint_checks and all(row["pad_numbers_match"] for row in footprint_checks):
         status = "mechanical_review_required"
     else:

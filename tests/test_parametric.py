@@ -1,3 +1,5 @@
+import pytest
+
 from szlcsc_mcp.models import Part
 from szlcsc_mcp.parametric import evaluate_constraints, parse_number
 
@@ -27,3 +29,19 @@ def test_input_voltage_range_derives_min_and_max():
     report = evaluate_constraints(p, {"input_voltage_min": "<=3V", "input_voltage_max": ">=5V"})
     assert report["all_matched"] is True
     assert all("derived_from_range" in x for x in report["details"])
+
+
+@pytest.mark.parametrize("label", ["Input Voltage", "输入电压", "Vin"])
+def test_nominal_input_voltage_cannot_prove_minimum_or_maximum(label):
+    report = evaluate_constraints(Part(parameters={label: "3.3V"}), {
+        "input_voltage_min": "<=3.3V", "input_voltage_max": ">=3.3V",
+    })
+    assert not report["all_matched"]
+    assert all(item["actual"] is None and item["reason"] == "missing" for item in report["details"])
+
+
+def test_explicit_voltage_bound_with_unit_suffix_remains_usable():
+    report = evaluate_constraints(Part(parameters={"Input Voltage Min (V)": "2.5V", "Input Voltage Max (V)": "5.5V"}), {
+        "input_voltage_min": "<=3V", "input_voltage_max": ">=5V",
+    })
+    assert report["all_matched"]

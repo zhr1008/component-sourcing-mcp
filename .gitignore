@@ -36,3 +36,5 @@ altium-catalog/
 .netrc
 _netrc
 .pypirc
+suppliers.json
+suppliers.local.json

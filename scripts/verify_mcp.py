@@ -31,7 +31,12 @@ async def check(transport, mode="auto"):
             "szlcsc_get_stock",
             "szlcsc_get_pricing",
             "szlcsc_jlcpcb_search",
+            "component_providers",
+            "component_search",
+            "component_get",
+            "component_offers",
         } <= names
+        assert len(tools) == 49
         valid = await client.call_tool("szlcsc_cache_status")
         assert not valid.is_error and "entries" in valid.structured_content
         invalid = await client.call_tool("szlcsc_get_part", {}, raise_on_error=False)
@@ -41,6 +46,12 @@ async def check(transport, mode="auto"):
         assert await client.get_prompt(
             "select_domestic_component", {"requirements": "RS485 transceiver"}
         )
+        providers = await client.call_tool("component_providers")
+        assert not providers.is_error and providers.structured_content["count"] == 5
+        unsupported = await client.call_tool("component_get", {"provider": "huaqiu", "identifier": "fixture"}, raise_on_error=False)
+        assert unsupported.is_error and unsupported.structured_content["error"]["code"] == "UNSUPPORTED_PROVIDER"
+        assert await client.read_resource("components://supplier-guide")
+        assert await client.get_prompt("compare_supplier_offers", {"mpn": "fixture", "quantity": "10"})
         after_error = await client.call_tool("szlcsc_cache_status")
         assert not after_error.is_error
         return {
@@ -56,6 +67,9 @@ async def check(transport, mode="auto"):
                 "resources/read",
                 "prompts/get",
                 "survives_error",
+                "supplier_configuration",
+                "unsupported_provider_isError",
+                "supplier_resource_prompt",
             ],
         }
 

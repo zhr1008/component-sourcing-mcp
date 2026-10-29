@@ -63,6 +63,10 @@ class SourcingMiddleware(Middleware):
             # Serialize mutations within a server; concurrent lookups stay free.
             name = context.message.name
             read_only = {
+                "component_providers",
+                "component_search",
+                "component_get",
+                "component_offers",
                 "szlcsc_search",
                 "szlcsc_parametric_search",
                 "szlcsc_get_part",

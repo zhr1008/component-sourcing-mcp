@@ -210,3 +210,4 @@ def szlcsc_library_repair(
 # Registers the v0.6 existing-Altium-library catalog/enrichment tools on the same MCP instance.
 from . import server_ad as _server_ad  # noqa: E402,F401
 from . import server_sourcing as _server_sourcing  # noqa: E402,F401
+from . import server_suppliers as _server_suppliers  # noqa: E402,F401

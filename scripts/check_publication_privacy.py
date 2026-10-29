@@ -53,7 +53,7 @@ def inspect_path(path: str) -> list[str]:
         rules.append("archive-must-stay-out-of-source-history")
     if (
         (name == ".env" or name.startswith(".env.")) and name not in {".env.example", ".env.template"}
-        or name in {".netrc", "_netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa", "id_ed25519", "kubeconfig"}
+        or name in {".netrc", "_netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "suppliers.json", "suppliers.local.json", "id_rsa", "id_ed25519", "kubeconfig"}
         or name.startswith("client_secret") and name.endswith(".json")
         or file.suffix in {".pem", ".key", ".p12", ".pfx"}
         or ".ssh" in file.parts

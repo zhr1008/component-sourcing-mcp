@@ -1,13 +1,21 @@
 ---
 name: szlcsc
-description: Source domestic China SZLCSC components by exact C-code/MPN or electrical/package filters, verify fresh domestic stock and CNY quantity pricing, discover separate JLCPCB basic/preferred/extended assembly libraries, retrieve Datasheets/EasyEDA assets, and generate, enrich or verify Altium component libraries.
+description: Source components across SZLCSC, JLCPCB, Mouser and DigiKey with exact identities, electrical/package filters and quantity offers; verify separate inventory pools and original currencies, retrieve Datasheets/EasyEDA assets, and generate, enrich or verify Altium libraries.
 ---
 
 # SZLCSC — 国内立创选型、资料、Altium 与已有库整理
 
 用户要求国内立创商城、`item.szlcsc.com`、人民币按数量报价、实时/分仓库存、Cxxxx/MPN、封装与电气参数选型、JLCPCB 基础/优选/扩展贴片库、Datasheet、EasyEDA/STEP、Altium 库，或整理已有 SchLib/PcbLib 时使用本技能。
 
-本说明适用于 Component Sourcing MCP v0.7.0-rc.4 的 45 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
+本说明适用于 Component Sourcing MCP v0.8.0-rc.1 的 49 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
+
+## 多供应商入口
+
+跨平台采购使用 `component_providers` 检查实现、凭据配置、官方申请渠道和实际请求状态；配置不等于已联通。随后用 `component_search` 检索、`component_get` 确认供应商 SKU/MPN，再用 `component_offers` 按数量报价。统一搜索的 limit 是每个供应商的分页大小；读取 `complete/provider_errors` 和各供应商 `has_more`，条件只在本次取得的分页内过滤。
+
+贸泽和 DigiKey 由用户自行申请官方 API，填写私有文件并通过 `COMPONENT_SUPPLIERS_CONFIG` 指定，或使用环境变量。申请及填写步骤见仓库 `docs/supplier-setup.md`；不要让用户在聊天、Issue 或公共日志提交密钥。华秋当前仅提供官方申请渠道，未验证协议前返回 `UNSUPPORTED_PROVIDER`。
+
+只比较同制造商、MPN、封装、币种和市场的报价组；包装变体的库存不相加，不隐式换汇。检查 MOQ、订购倍数、原始币种、实际订购量和快照时间，运费税费未知。已有 45 个立创/CAD 工具保持兼容，下面的国内采购规则适用于国内库存池。
 
 ## 一、不可违反的数据与证据规则
 

@@ -50,6 +50,8 @@ async def _lifespan(app):
         await asyncio.to_thread(eda_client.close)
         from .server_sourcing import jlc_client
         await asyncio.to_thread(jlc_client.close)
+        from .server_suppliers import registry
+        await asyncio.to_thread(registry.close)
 
 
 mcp = FastMCP("szlcsc", version=__version__, strict_input_validation=True,

@@ -2,7 +2,7 @@
 
 用于电子元器件选型、库存/阶梯价查询、资料下载和 Altium 器件库管理的 MCP Server，可接入 Codex 等 MCP 客户端。
 
-当前版本为 **v0.7.0-rc.4（预发布）**，Python 包版本为 `0.7.0rc4`。当前实现 **45 个 Tool、一项 Resource 和一项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
+当前版本为 **v0.8.0-rc.1（预发布）**，Python 包版本为 `0.8.0rc1`。当前实现 **49 个 Tool、两项 Resource 和两项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
 
 | 平台或工作流 | 当前状态 |
 |---|---|
@@ -10,9 +10,13 @@
 | JLCPCB 装配库 | 已实现基础/优选/扩展库检索和分类；上游可能返回访问限制 |
 | EasyEDA / Altium | 已实现资料获取；Altium 扫描/写回/转换需显式安装可选依赖，见下方安全限制 |
 | 长期资料库 | 已实现分类归档、离线检索、同步预览、审计、修复、导出和迁移 |
-| Mouser / 华秋 / DigiKey | 已完成官方接口可行性核查，**尚未接入当前工具**；见[接入方案](docs/multi-supplier-feasibility.md) |
+| 贸泽 Mouser | 已实现官方 Search API 关键词/精确料号、库存与原币阶梯价；需自行申请 Search API Key |
+| DigiKey | 已实现官方 Product Information V4 搜索/详情、包装库存、阶梯价与 OAuth 自动令牌；需自行申请应用凭据 |
+| 华秋 Huaqiu | 提供官方申请渠道和贡献说明；尚无可执行适配器，填写 Key 不会代替正式协议接入 |
 
-Python 模块 `szlcsc_mcp`、原 CLI 别名 `szlcsc-mcp` 和既有 `szlcsc_*` 工具名保留兼容；新增 CLI 名为 `component-sourcing-mcp`。未来通用供应商工具会另行实现，不用立创 C 编号或 CNY 字段承载其他平台的数据。
+Python 模块 `szlcsc_mcp`、原 CLI 别名 `szlcsc-mcp` 和既有 45 个 `szlcsc_*` 工具保留兼容。新增 `component_providers`、`component_search`、`component_get`、`component_offers` 提供统一入口，不用立创 C 编号或 CNY 字段承载其他平台的数据。
+
+**多平台申请和配置见 [供应商接入指南](docs/supplier-setup.md)**：每位使用者自行申请 API，填写私有配置文件或环境变量。仓库不提供真实 Key；未配置的平台返回结构化状态，其他平台仍可查询。Mouser/DigiKey 已通过官方契约 Mock 验证，当前维护环境未提供真实账户凭据，尚未完成其授权联网联调。
 
 ## 安装
 
@@ -28,7 +32,7 @@ py -3.12 -m venv .venv
 & '.\.venv\Scripts\python.exe' -X utf8 -c "from importlib.metadata import version; print(version('component-sourcing-mcp'))"
 ```
 
-版本检查应显示 `0.7.0rc4`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
+版本检查应显示 `0.8.0rc1`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
 
 ## 接入 Codex
 
@@ -71,7 +75,7 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 | 转换与长期归档 | `szlcsc_altium_import`、`szlcsc_altium_smoke_test`、`szlcsc_library_add`、`szlcsc_library_audit`、`szlcsc_library_migrate` |
 | 诊断/缓存 | `szlcsc_healthcheck`、`szlcsc_cache_status` |
 
-完整 45 个工具及调用边界见 [skills/szlcsc/SKILL.md](skills/szlcsc/SKILL.md)。Resource 为 `szlcsc://sourcing-guide`，Prompt 为 `select_domestic_component`。
+原有 45 个工具及调用边界见 [skills/szlcsc/SKILL.md](skills/szlcsc/SKILL.md)，新增 4 个统一工具见 [供应商指南](docs/supplier-setup.md)。Resource 包含 `szlcsc://sourcing-guide`、`components://supplier-guide`；Prompt 包含 `select_domestic_component`、`compare_supplier_offers`。
 
 ```text
 szlcsc_get_part(identifier="C2040", refresh=true)
@@ -116,7 +120,7 @@ Datasheet 是 pin/package/footprint/electrical 最终判断依据。自动 smoke
 
 公共 CI 使用 GitHub-hosted runner，并检查完整可达历史的隐私规则。不要提交真实凭据、私人目录、原始日志或用户库。贡献与漏洞报告见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [SECURITY.md](SECURITY.md)。
 
-本版本的独立安装、203 项测试、协议检查及联网探测范围见[自动验证记录](docs/test-reports/v0.7.0-rc.4-automated.md)。联网测试中的 JLCPCB 访问限制和超时均单独记录，不计为数据查询成功。
+本版实现和验证范围见 [rc.1 记录](docs/test-reports/v0.8.0-rc.1-automated.md)。原始公开快照的 203 项验证保留在 [rc.4 记录](docs/test-reports/v0.7.0-rc.4-automated.md)。未提供凭据或上游受限的调用不计为授权联网成功。
 
 ## 许可与数据来源
 

@@ -1,6 +1,6 @@
 # Codex 接入与验证
 
-当前 Python distribution 为 `component-sourcing-mcp==0.7.0rc4`，模块仍为
+当前 Python distribution 为 `component-sourcing-mcp==0.8.0rc1`，模块仍为
 `szlcsc_mcp`，两个 CLI 名 `component-sourcing-mcp` 和 `szlcsc-mcp` 均可用。
 
 按 README 创建虚拟环境并安装。先用 `python -m pip check` 和
@@ -20,9 +20,11 @@ SZLCSC_REQUEST_DELAY = '0.5'
 SZLCSC_EDA_REQUEST_DELAY = '0.5'
 ```
 
-替换路径，避免重复追加同名 TOML 表。重连后枚举 45 个工具，先调用
+替换路径，避免重复追加同名 TOML 表。重连后枚举 49 个工具，先调用
 `szlcsc_cache_status`；可用性必须来自实际连接，不能只根据配置文件判断。
 HTTP 配置为 `url = 'http://127.0.0.1:8000/mcp'`，作为 stdio 配置的替代。
+
+贸泽/DigiKey 的申请和私有 JSON 配置见 [供应商指南](supplier-setup.md)。在本节 env 表增加 `COMPONENT_SUPPLIERS_CONFIG` 指向自己的凭据文件；先调用 `component_providers` 检查状态。使用有工具目录缓存的 MCP 懒加载代理时，更新安装后也需刷新该服务的目录缓存。
 
 离线测试：
 
@@ -35,7 +37,7 @@ python -X utf8 scripts/verify_mcp.py --all-transports
 可选的已安装进程功能测试必须指定独立写入目录、实际 wheel 和客户端配置：
 
 ```text
-python -X utf8 scripts/test_installed_functional.py network --server-name components --output-root C:/ComponentTest/isolated --wheel C:/Downloads/component_sourcing_mcp-0.7.0rc4-py3-none-any.whl
+python -X utf8 scripts/test_installed_functional.py network --server-name components --output-root C:/ComponentTest/isolated --wheel C:/Downloads/component_sourcing_mcp-0.8.0rc1-py3-none-any.whl
 ```
 
 该脚本核对解释器、配置中的 server command、发行版版本和 wheel 源码一致性。

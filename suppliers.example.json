@@ -1,0 +1,14 @@
+{
+  "mouser": {
+    "api_key": ""
+  },
+  "digikey": {
+    "client_id": "",
+    "client_secret": "",
+    "sandbox": false,
+    "site": "US",
+    "language": "en",
+    "currency": "USD",
+    "account_id": ""
+  }
+}

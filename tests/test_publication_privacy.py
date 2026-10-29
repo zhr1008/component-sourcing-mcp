@@ -86,7 +86,7 @@ def test_sensitive_paths_are_detected_even_with_shared_blob_contents(tmp_path):
 
 
 def test_sensitive_path_policy_keeps_only_portable_templates():
-    for name in (".env", "settings/.netrc", "keys/private.pem", "auth/client_secret_local.json"):
+    for name in (".env", "settings/.netrc", "keys/private.pem", "auth/client_secret_local.json", "suppliers.json", "settings/suppliers.local.json"):
         assert guard.inspect_path(name) == ["sensitive-file-must-stay-local"]
     for name in (".env.example", ".env.template", "src/config.py"):
         assert guard.inspect_path(name) == []

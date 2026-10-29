@@ -40,6 +40,17 @@ Ordinary bugs can use public issues with a sanitized reproduction.
 
 ## GitHub Actions and local validation
 
+Supplier API credentials are per-user. Use the blank `suppliers.example.json`
+template outside the checkout and set `COMPONENT_SUPPLIERS_CONFIG`, or configure
+environment variables. `suppliers.json` and `suppliers.local.json` are ignored and
+rejected by the publication guard. Credential files are plaintext: restrict their
+filesystem permissions and do not upload them. OAuth tokens stay in process memory;
+supplier caches contain cleaned records and an HMAC account scope, not API keys or
+raw authenticated responses. Supplier transports redact configured keys and tokens
+from HTTP logs and returned product fields. These protections do not sanitize
+arbitrary user-added debug logs, operating-system process dumps or third-party
+instrumentation. Never submit raw authenticated responses as public bug reports.
+
 Enable the repository's local pre-push guard as described in
 [CONTRIBUTING.md](CONTRIBUTING.md). It rejects credential filenames, known token
 formats, private paths and email addresses outside GitHub noreply or reserved

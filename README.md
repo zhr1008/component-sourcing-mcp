@@ -2,7 +2,7 @@
 
 用于电子元器件选型、库存/阶梯价查询、资料下载和 Altium 器件库管理的 MCP Server，可接入 Codex 等 MCP 客户端。
 
-当前版本为 **v0.8.0-rc.3（预发布）**，Python 包版本为 `0.8.0rc3`。当前实现 **50 个 Tool、两项 Resource 和两项 Prompt**；正式 Altium/Datasheet 制造验收尚未完成。
+当前源码版本为 **0.8.0rc4（预发布候选）**，包含 **51 个工具、两项 Resource 和两项 Prompt**。
 
 | 平台或工作流 | 当前状态 |
 |---|---|
@@ -32,7 +32,7 @@ py -3.12 -m venv .venv
 & '.\.venv\Scripts\python.exe' -X utf8 -c "from importlib.metadata import version; print(version('component-sourcing-mcp'))"
 ```
 
-版本检查应显示 `0.8.0rc3`。发布的 wheel、源码 ZIP 和校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
+从当前源码构建后，版本检查应显示 `0.8.0rc4`。已发布版本及校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
 
 ## 接入 Codex
 
@@ -66,6 +66,7 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 
 | 任务 | 主要 Tool |
 |---|---|
+| 中文需求选型及 AD 字段 | `szlcsc_select` |
 | 需求/系列/变体发现 | `szlcsc_discover` |
 | 搜索/参数选型 | `szlcsc_search`、`szlcsc_parametric_search`、`szlcsc_get_part` |
 | 库存/数量报价 | `szlcsc_get_stock`、`szlcsc_get_pricing` |
@@ -76,12 +77,16 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 | 转换与长期归档 | `szlcsc_altium_import`、`szlcsc_altium_smoke_test`、`szlcsc_library_add`、`szlcsc_library_audit`、`szlcsc_library_migrate` |
 | 诊断/缓存 | `szlcsc_healthcheck`、`szlcsc_cache_status` |
 
-原有 45 个工具及需求发现工具的调用规则见 [skills/szlcsc/SKILL.md](skills/szlcsc/SKILL.md)，4 个统一工具见 [供应商指南](docs/supplier-setup.md)。Resource 包含 `szlcsc://sourcing-guide`、`components://supplier-guide`；Prompt 包含 `select_domestic_component`、`compare_supplier_offers`。
+各任务的工具入口见 [szlcsc 技能](skills/szlcsc/SKILL.md)，统一接口见 [供应商指南](docs/supplier-setup.md)。Resource 包含 `szlcsc://sourcing-guide`、`components://supplier-guide`，Prompt 包含 `select_domestic_component`、`compare_supplier_offers`。
 
-按需求选型从 `szlcsc_discover` 开始。它组合短功能词与中英文查询、在预算内翻页、从返回型号扩展系列，优先覆盖不同封装/引脚数，再补全候选详情。可用 `family_queries` 显式补充制造商系列；不要提前把未知库存、未知价或未指定的封装当作排除条件。
+在 Codex 里直接描述需求，例如「找一颗 3.3V 电压基准，初始精度 ≤0.2%，SOT-23」。`szlcsc_select` 返回最多 5 个候选，每行含完整型号、立创料号、关键参数、依据及 `ad_comment`、`ad_description`。已知不符合硬条件的器件会排除，缺少证据的候选会列出待核实项。
+
+接着说「精度放宽到 0.5%」时，客户端把上一轮返回的 `selection` 放入 `previous`，保持其余条件。明确说「按 100 颗报价」时，工具才对短名单查询库存、起订量和数量报价。可用 `conditions` 指定未自动识别的目录参数，值为 `null` 时删除该条件。
+
+需要扩大制造商系列或封装变体的检索范围时，可用 `szlcsc_discover` 和 `family_queries`。精确查料或系列补搜时，传 `include_procurement=false` 可仅获取目录信息。
 
 ```text
-szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10)
+szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10, include_procurement=false)
 ```
 
 读取每个候选的 `found_by`、`exact_identity`、`requirements`、`constraint_match`，以及 `coverage.query_errors / remaining_candidates / query_budget_reached`。`complete=false` 是明确的检索边界，空结果不能证明市场不存在。资格认证保持 unknown，Q1 后缀或商城描述不代替制造商证据。普通 `szlcsc_search` 默认保持数组响应；设置 `include_coverage=true` 获取 `{results,count,coverage}`，按 `coverage.next_cursor` 的 `page/result_offset` 继续，避免跳过同一页剩余候选。每页读取上游 30 条，`max_results` 是输出上限，不能据此判断已搜尽。

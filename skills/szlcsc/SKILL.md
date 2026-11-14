@@ -1,13 +1,26 @@
 ---
 name: szlcsc
-description: Source components across SZLCSC, JLCPCB, Mouser and DigiKey with exact identities, electrical/package filters and quantity offers; verify separate inventory pools and original currencies, retrieve Datasheets/EasyEDA assets, and generate, enrich or verify Altium libraries.
+description: Use when selecting electronic components from 立创 SZLCSC, JLCPCB, Mouser or DigiKey, comparing MPN/C codes, electrical specs and package, checking stock/MOQ/quantity pricing, or retrieving Datasheets, EasyEDA/STEP and Altium SchLib/PcbLib assets. 包括按中文需求选型、连续调整筛选条件、AD Comment 和 Description。
 ---
 
 # SZLCSC — 国内立创选型、资料、Altium 与已有库整理
 
 用户要求国内立创商城、`item.szlcsc.com`、人民币按数量报价、实时/分仓库存、Cxxxx/MPN、封装与电气参数选型、JLCPCB 基础/优选/扩展贴片库、Datasheet、EasyEDA/STEP、Altium 库，或整理已有 SchLib/PcbLib 时使用本技能。
 
-本说明适用于 Component Sourcing MCP v0.8.0-rc.3 的 50 个 Tool。配置存在、技能已安装和本轮工具实际可调用是不同证据；未暴露原生工具时可检查本地 stdio 服务，不宣称当前聊天已加载它们。预发布版不代表 Antigravity/Altium 稳定验收通过。
+本说明适用于 Component Sourcing MCP 0.8.0rc4 的 51 个工具。先以当前会话实际枚举的工具判断可用性，必要时通过本地 stdio 验证。
+
+## 按任务选工具
+
+按当前会话实际暴露的工具名调用。新版选型入口为 `szlcsc_select`。若当前目录缺少此工具，先让客户端重新发现新版工具。
+
+| 用户要做什么 | 优先入口 |
+| --- | --- |
+| 按中文需求选料，或继续调整条件 | `szlcsc_select`。同一选型把上轮 `selection` 传给 `previous`，再写本轮改动。 |
+| 补找系列、后缀、封装变体 | `szlcsc_discover`。只做技术筛选时传 `include_procurement=false`，检查覆盖范围和查询错误。 |
+| 查明确的 C 编号或完整订购型号 | `szlcsc_get_part`。只查型号、参数和资料时传 `include_procurement=false`。 |
+| 核对手头的采购料号 | 库存用 `szlcsc_get_stock`。数量报价用 `szlcsc_get_pricing`，带上明确数量。 |
+| 区分装配库和跨供应商采购 | JLCPCB 用 `szlcsc_jlcpcb_search`。跨供应商用 `component_providers`、`component_search`、`component_get`、`component_offers`。 |
+| 下载资料、生成或整理库文件 | 见 [Datasheet](#三datasheet)、[新建 Altium 库](#四easyeda--新器件-altium-生成)和[已有库整理](#五已有-altium-schlibpcblib-整理v06)。 |
 
 ## 多供应商入口
 
@@ -21,8 +34,8 @@ description: Source components across SZLCSC, JLCPCB, Mouser and DigiKey with ex
 
 1. 国内采购结论以 `szlcsc.com` 为准，不静默替换成国际 LCSC 美元价。
 2. `null/unknown` 不是 0；缺失库存、价格、参数必须保持 unknown。
-3. 成本比较默认使用最小采购数量对应的小批量人民币阶梯价 `small_batch_price_cny`。
-4. 有合适现货时，不把缺货料作为主推荐。
+3. 给出采购数量后，按实际订购量比较有数量依据的单价和总价。展示价单列，库存与报价未知时写待核实。
+4. 采购建议核对库存能否覆盖实际订购量。单纯技术选型保留尚未查库存的候选。
 5. 替代料工具只提供候选，不能仅靠候选评分声明 pin-to-pin/drop-in。
 6. EasyEDA/SZLCSC Symbol、Footprint、3D 都是**辅助 CAD 资产**，不是制造商真值。
 7. **Datasheet 是 pinout、package、terminal numbering、机械尺寸、land pattern、电气参数最终判定的唯一权威来源。**
@@ -35,7 +48,7 @@ description: Source components across SZLCSC, JLCPCB, Mouser and DigiKey with ex
 ### 精确 C 编号
 
 ```text
-szlcsc_get_part("Cxxxxxx")
+szlcsc_get_part(identifier="Cxxxxxx", include_procurement=false)
 ```
 
 需要替代时：
@@ -51,19 +64,24 @@ szlcsc_compare_parts(...)
 
 ### 明确 MPN
 
-1. `szlcsc_search(MPN)`。
-2. 必须确认返回 MPN exact match。
-3. 再 `szlcsc_get_part(C编号)` 获取完整详情。
-4. 同 MPN 多 C 编号时比较 package、brand、stock、price；不能因为搜索排第一就认为唯一。
+1. 用 `szlcsc_get_part(identifier=MPN, include_procurement=false)` 核对完整订购号。
+2. 遇到 `AMBIGUOUS_PART` 用 `szlcsc_search` 找同型号条目，再按品牌、封装和 C 编号逐项核对。
+3. 精确查询未命中时用 `szlcsc_discover` 补查系列和后缀，并标明候选的实际订购型号。
 
 普通搜索必须读取 `search_relevance.hard_pass`，不要盲信商城原始排序。
 
 ### 功能/参数选型
 
-需求选型先发现候选与系列/封装变体：
+普通中文需求优先调用 `szlcsc_select`。把用户原话传给 `request`，通过 `conditions` 补充明确但未自动识别的条件。保留返回的 `selection`，后续只改精度、封装或数量时将它传给 `previous`，沿用其他条件。用户给出数量后才查询候选的当前库存和该数量的报价。
+
+- 最终表格最多 5 行，每行有完整型号、立创料号、封装、关键参数、依据、AD Comment 和 AD Description。照录工具返回的两个 AD 字段。
+- 芯片 Comment 用完整订购型号，保留订购后缀。Description 使用中文、半角 `/` 分隔，按名称/规格/完整型号/重要参数/封装/渠道料号/品牌填写。对 `pending_evidence` 的候选指出待核实的具体条件。
+- 电容 Comment 用实际容值/耐压，电阻用阻值，电感用电感量。电容 Description 用名称/容值/耐压/精度/等级/封装。
+
+需要扩大系列或封装变体范围时使用下面的入口。
 
 ```text
-szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10)
+szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10, include_procurement=false)
 ```
 
 - 先拆分功能、硬条件、偏好及数量；未指定封装/预算/现货时不要自行增加这些硬过滤。
@@ -112,6 +130,8 @@ szlcsc_jlcpcb_categories(refresh=false)
 - 分类字典缓存 24 小时。403/429 或未知字段必须报告限制，不绕过验证码、登录、WASM 或指纹限制。
 
 ### MCP 错误与调用边界
+
+查料、输出 AD Comment/Description、下载资料和离线库文件处理使用器件与库文件工具即可。任务确实要读取或编辑 Altium Designer 中的文档时，再按该任务调用 AD 桥接工具。AD 桥接的部分只读工具也会激活或切换文档。
 
 失败检查 `isError` 与 `error.code / error.message / error.retryable / error.retry_after_seconds`。PART_NOT_FOUND/AMBIGUOUS_PART/INVALID_ARGUMENT 不盲目重试；RATE_LIMITED 按等待时间处理；ACCESS_DENIED 停止并报告访问条件。批次结果还需检查逐项失败。
 

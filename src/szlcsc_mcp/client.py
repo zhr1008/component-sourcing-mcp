@@ -171,6 +171,8 @@ class SZLCSCClient:
         anchors because shallow search results often omit parametric values.
         """
         low = token.casefold()
+        if re.fullmatch(r"(?:sot|soic|sop|ssop|tssop|msop|qfn|dfn|qfp|lqfp|tqfp|dip|bga|wlcsp)[-_]?\d+(?:[-_]\d+)*|x[578][rs]|[yz]5[uv]", low):
+            return False
         if re.fullmatch(r"(?:aec[-_]?q\d+|iso[-_]\d+|iso26262|sil[-_]?\d+|asil[-_]?[abcd]|can[-_]?fd)", low):
             return False
         if low in {"rs485", "rs-485", "rs422", "rs-422", "can"}:
@@ -384,7 +386,8 @@ class SZLCSCClient:
             window = self.search(identifier, max_results=50, enrich=False, page=page)
             candidates.extend(window)
             meta = getattr(window, "coverage", {})
-            if meta.get("has_more") is False or meta.get("raw_count", len(window)) < self.SEARCH_PAGE_SIZE:
+            has_more = meta.get("has_more")
+            if has_more is False or (has_more is None and meta.get("raw_count", len(window)) < self.SEARCH_PAGE_SIZE):
                 break
         ident = identifier.casefold()
         code_matches = [p for p in candidates if (p.lcsc_code or "").casefold() == ident]
@@ -405,7 +408,8 @@ class SZLCSCClient:
         return None
 
     @tracked
-    def get_part(self, identifier: str, *, refresh: bool = False, include_static: bool = True) -> Part:
+    def get_part(self, identifier: str, *, refresh: bool = False, include_static: bool = True,
+                 include_procurement: bool = True) -> Part:
         if not identifier or not identifier.strip():
             raise SZLCSCError("identifier must not be empty", code="INVALID_ARGUMENT")
         part = self._find_exact(identifier)
@@ -416,7 +420,7 @@ class SZLCSCClient:
                 code="PART_NOT_FOUND",
             )
 
-        if part.category_id and part.lcsc_code:
+        if include_procurement and part.category_id and part.lcsc_code:
             try:
                 extra = self._category_exact(part.category_id, part.lcsc_code)
                 if extra:
@@ -441,6 +445,9 @@ class SZLCSCClient:
                 part.warnings.append(f"Detail enrichment failed: {exc.code}")
 
         # Procurement must be refreshed even for focused stock/price tools.
+        if not include_procurement:
+            unknown_procurement(part)
+            return part
         if part.product_url:
             try:
                 self._enrich_from_html(part)

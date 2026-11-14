@@ -10,7 +10,7 @@ from fastmcp import Client
 from jsonschema import validate
 
 from szlcsc_mcp.cache import SqliteCache
-from szlcsc_mcp.client import SZLCSCClient, SZLCSCError
+from szlcsc_mcp.client import SearchResults, SZLCSCClient, SZLCSCError
 from szlcsc_mcp.errors import SourcingError
 from szlcsc_mcp.http import SafeSession, retry_after_seconds, safe_get
 from szlcsc_mcp.models import Part, PriceTier
@@ -175,6 +175,17 @@ def test_exact_lookup_never_accepts_single_fuzzy_result_or_ambiguous_mpn(tmp_pat
     )
     with pytest.raises(SZLCSCError) as caught:
         client.get_part("ABC")
+    assert caught.value.code == "AMBIGUOUS_PART"
+
+
+def test_exact_mpn_checks_later_pages_when_supplier_reports_more(tmp_path):
+    client = SZLCSCClient(cache=SqliteCache(tmp_path / "cache.db"), request_delay=0)
+    client.search = Mock(side_effect=[
+        SearchResults([Part(lcsc_code="C1", mpn="ABC")], coverage={"raw_count": 1, "has_more": True}),
+        SearchResults([Part(lcsc_code="C2", mpn="ABC")], coverage={"raw_count": 1, "has_more": False}),
+    ])
+    with pytest.raises(SZLCSCError) as caught:
+        client.get_part("ABC", include_procurement=False)
     assert caught.value.code == "AMBIGUOUS_PART"
 
 

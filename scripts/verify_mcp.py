@@ -29,6 +29,7 @@ async def check(transport, mode="auto"):
         assert {
             "szlcsc_search",
             "szlcsc_discover",
+            "szlcsc_select",
             "szlcsc_get_stock",
             "szlcsc_get_pricing",
             "szlcsc_jlcpcb_search",
@@ -37,7 +38,7 @@ async def check(transport, mode="auto"):
             "component_get",
             "component_offers",
         } <= names
-        assert len(tools) == 50
+        assert len(tools) == 51
         valid = await client.call_tool("szlcsc_cache_status")
         assert not valid.is_error and "entries" in valid.structured_content
         invalid = await client.call_tool("szlcsc_get_part", {}, raise_on_error=False)

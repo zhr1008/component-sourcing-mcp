@@ -723,7 +723,7 @@ def test_new_tools_work_through_mcp_and_survive_unconfigured_provider(monkeypatc
 
     async def run():
         async with Client(server.mcp) as client:
-            assert len(await client.list_tools()) == 50
+            assert len(await client.list_tools()) == 51
             providers = await client.call_tool("component_providers")
             assert not providers.is_error
             assert await client.read_resource("components://supplier-guide")

@@ -161,3 +161,19 @@ def test_empty_unknown_total_page_does_not_create_an_automatic_scan_to_page_limi
         assert result.coverage["complete"] is False
     finally:
         client.close()
+
+
+def test_verified_electrical_match_wins_before_output_cap(tmp_path):
+    client = client_for(tmp_path, {})
+    wrong = Part(lcsc_code="C1", mpn="REF1001", name="电压基准")
+    right = Part(lcsc_code="C2", mpn="REF2001", name="电压基准")
+    client.search = Mock(return_value=[wrong, right])
+    wrong_detail = Part(lcsc_code="C1", mpn="REF1001", name="电压基准", parameters={"输出电压": "5V"})
+    right_detail = Part(lcsc_code="C2", mpn="REF2001", name="电压基准", parameters={"输出电压": "3.3V"})
+    client.get_part = Mock(side_effect={"C1": wrong_detail, "C2": right_detail}.__getitem__)
+    try:
+        result = client.discover("电压基准", max_results=1, max_queries=1, constraints={"output_voltage": "=3.3V"})
+        assert [row["part"].mpn for row in result["results"]] == ["REF2001"]
+        assert result["results"][0]["constraint_match"]["all_matched"]
+    finally:
+        client.close()

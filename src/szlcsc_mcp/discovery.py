@@ -49,16 +49,23 @@ def query_plan(client, query: str, families: list[str]) -> list[str]:
 def requirement_report(client, part, query: str) -> list[dict]:
     haystack = client._search_haystack(part)
     rows = []
+    nonisolated = r"非隔离|\bnon[- ]?isolat"
+    isolated = r"隔离|\bisolat(?:ed|ion|ing)\b"
+    wants_nonisolated = re.search(nonisolated, query, re.I)
     checks = (
-        (r"隔离|isolat", "isolation", r"隔离|\bisolat(?:ed|ion|ing)\b", r"非隔离|non[- ]?isolat"),
+        (r"隔离|isolat", "isolation", isolated, nonisolated),
         (r"低功耗|low[- ]?power", "low_power", r"低功耗|low[- ]?power", None),
         (r"can[- ]?fd", "CAN-FD", r"can[- ]?fd", None),
     )
     for trigger, label, positive, negative in checks:
         if re.search(trigger, query, re.I):
-            status = "mismatched" if negative and re.search(negative, haystack, re.I) else (
-                "catalog_claim" if re.search(positive, haystack, re.I) else "unknown"
-            )
+            if label == "isolation" and wants_nonisolated:
+                status = ("catalog_claim" if re.search(nonisolated, haystack, re.I) else
+                          "mismatched" if re.search(isolated, haystack, re.I) else "unknown")
+            else:
+                status = "mismatched" if negative and re.search(negative, haystack, re.I) else (
+                    "catalog_claim" if re.search(positive, haystack, re.I) else "unknown"
+                )
             rows.append({"requirement": label, "status": status, "evidence_level": "catalog_only"})
     for match in re.finditer(r"AEC[-_ ]?Q\d+|ASIL[-_ ]?[ABCD]|SIL[-_ ]?\d+|车规|automotive", query, re.I):
         rows.append({"requirement": match[0].upper(), "status": "unknown",
@@ -71,7 +78,8 @@ def requirement_report(client, part, query: str) -> list[dict]:
 
 def discover(client, query, *, max_results=10, family_queries=None, constraints=None,
              package=None, brand=None, in_stock=None, max_price=None, max_queries=6,
-             pages_per_query=2, refresh=False, enrich=True):
+             pages_per_query=2, refresh=False, enrich=True, include_procurement=True,
+             detail_budget=50, exact_labels=False):
     if (not isinstance(query, str) or not query.strip() or len(query) > 200
             or type(max_results) is not int or not 1 <= max_results <= 50
             or type(max_queries) is not int or not 1 <= max_queries <= 8
@@ -81,7 +89,7 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
     if (not isinstance(families, list) or len(families) > 4
             or any(not isinstance(q, str) or not q.strip() or len(q) > 200 for q in families)):
         raise SourcingError("family_queries accepts at most four nonempty short queries", code="INVALID_ARGUMENT")
-    if not enrich and (in_stock is not None or max_price is not None):
+    if (not enrich or not include_procurement) and (in_stock is not None or max_price is not None):
         raise SourcingError("Commercial filters require current detail enrichment", code="INVALID_ARGUMENT")
     pending = deque(query_plan(client, query, families))
     seen_queries = set()
@@ -131,7 +139,10 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
                     prefix = family_query(part.mpn or "")
                     if prefix and prefix.casefold() not in seen_queries and prefix not in pending:
                         pending.append(prefix)
-                if coverage.get("stopped_on_access_limit") or meta.get("has_more") is False or raw_count < client.SEARCH_PAGE_SIZE:
+                has_more = meta.get("has_more")
+                if coverage.get("stopped_on_access_limit") or not raw_count or has_more is False or (
+                    has_more is None and raw_count < client.SEARCH_PAGE_SIZE
+                ):
                     break
             if coverage.get("stopped_on_access_limit"):
                 break
@@ -146,7 +157,14 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
             automotive_claim = bool(automotive_requested and re.search(
                 r"aec[-_ ]?q\d+|车规|汽车|automotive", client._search_haystack(row["part"]), re.I
             ))
-            return (contradicted, unsupported, -int(automotive_claim), -row["relevance"]["score"], row["part"].mpn or "")
+            evidence = row.get("constraint_match") or evaluate_constraints(
+                row["part"], constraints or {}, exact_labels=exact_labels,
+            )
+            failed = sum(not item["matched"] and item["reason"] not in {"missing", "not_numeric", "unit_unknown"}
+                         and not item["reason"].startswith("unit_mismatch:")
+                         for item in evidence["details"])
+            return (failed + contradicted, not evidence["all_matched"], -evidence["matched"],
+                    unsupported, -int(automotive_claim), -row["relevance"]["score"], row["part"].mpn or "")
 
         ranked = sorted(candidates.values(), key=rank)
         # Cover package/pin variants before spending all detail calls on one package.
@@ -168,12 +186,13 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
             if not client._matches_filters(part, package=package, brand=brand):
                 excluded["static_filters"] += 1
                 continue
-            if detail_count >= 50:
+            if detail_count >= detail_budget:
                 break
             detail_count += 1
             if enrich and part.lcsc_code:
                 try:
-                    part = client.get_part(part.lcsc_code)
+                    part = (client.get_part(part.lcsc_code) if include_procurement else
+                            client.get_part(part.lcsc_code, include_procurement=False))
                 except SourcingError as exc:
                     unknown_procurement(part, exc.code)
             if not client._matches_filters(part, package=package, brand=brand,
@@ -184,15 +203,22 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
                 continue
             results.append({
                 "part": part, "found_by": row["found_by"],
+                "relevance": row["relevance"],
                 "exact_identity": query.strip().casefold() in {(part.mpn or "").casefold(), (part.lcsc_code or "").casefold()},
                 "requirements": requirement_report(client, part, query),
-                "constraint_match": evaluate_constraints(part, constraints) if constraints else None,
+                "constraint_match": evaluate_constraints(part, constraints, exact_labels=exact_labels) if constraints else None,
                 "manufacturer_verification_required": True,
             })
-            if len(results) >= max_results:
+            if not constraints and len(results) >= max_results:
                 break
+        if constraints:
+            results.sort(key=rank)
+        evaluated_count = len(results)
+        results = results[:max_results]
+        for row in results:
+            row.pop("relevance")
         coverage.update({"unique_candidates": len(candidates), "detail_inspected": detail_count,
-                         "returned_count": len(results), "excluded": excluded,
+                         "returned_count": len(results), "evaluated_count": evaluated_count, "excluded": excluded,
                          "remaining_candidates": max(0, len(ordered) - detail_count - excluded["static_filters"]),
                          "query_budget_reached": bool(pending) and len(seen_queries) >= max_queries})
         response = {"results": results, "count": len(results), "coverage": coverage,

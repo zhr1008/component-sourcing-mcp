@@ -5,8 +5,11 @@ from typing import Annotated
 
 from pydantic import Field
 
+from .errors import SourcingError, error_payload
 from .jlcpcb import JLCPCBClient
-from .schemas import Identifier, LibraryType, Page, Quantity, Query, ResultLimit
+from .models import Part
+from .schemas import ConstraintText, Identifier, LibraryType, Page, Quantity, Query, ResultLimit
+from .selection import SelectionCriteria, selection_criteria, shortlist
 from .server_base import client, mcp
 
 jlc_client = JLCPCBClient(
@@ -55,6 +58,10 @@ def szlcsc_get_pricing(
     默认绕过缓存；阶梯未知/数量未覆盖时单价和总价为 null，禁止用美元价或批量最低价代替。
     """
     part = client.get_part(identifier, refresh=refresh, include_static=False)
+    return _quantity_quote(part, quantity)
+
+
+def _quantity_quote(part: Part, quantity: int) -> dict:
     order_qty = max(quantity, part.min_order_qty or quantity)
     multiple = part.order_multiple or 1
     if multiple > 1:
@@ -93,6 +100,50 @@ def szlcsc_get_pricing(
 
 
 @mcp.tool(annotations=READ_ONLY)
+def szlcsc_select(
+    request: Query,
+    previous: SelectionCriteria | None = None,
+    conditions: Annotated[dict[ConstraintText, ConstraintText | None], Field(max_length=30)] | None = None,
+    catalog_query: Query | None = None,
+    quantity: Quantity | None = None,
+    refresh: bool = False,
+) -> dict:
+    """中文器件选型首选入口。最多 5 个候选，每项提供型号、立创料号、关键参数、证据和 AD Comment/Description。
+
+    从需求提取类目、封装和常见规格。显式条件可通过 conditions 补充，null 删除对应条件。
+    接着改一项时，将上次返回的 selection 原样传入 previous，request 填本轮改动。新器件需求直接开始新查询。
+    仅在给出采购数量时查询候选的最新零售库存及对应报价。价格适用数量未知时，展示价单独列出。
+    """
+    try:
+        criteria, notes = selection_criteria(
+            request, previous, conditions=conditions, catalog_query=catalog_query, quantity=quantity,
+        )
+        result = shortlist(client, criteria, refresh=refresh)
+    except SourcingError as exc:
+        return error_payload(exc)
+    result["notes"] = notes
+    if criteria.quantity is not None:
+        for row in result["results"]:
+            code = row["lcsc_code"]
+            try:
+                part = client.get_part(code, refresh=True, include_static=False)
+                listing_mpn = row["evidence"]["listing_mpn"]
+                if ((part.lcsc_code or "").casefold() != code.casefold()
+                        or (part.mpn or "").casefold() != listing_mpn.casefold()):
+                    raise SourcingError("商品详情与候选型号不一致", code="IDENTITY_MISMATCH")
+                row["procurement"] = {
+                    **_quantity_quote(part, criteria.quantity),
+                    "stock": part.stock,
+                    "total_stock": part.total_stock,
+                    "warehouse_stock": part.warehouse_stock,
+                    "in_stock": part.in_stock,
+                }
+            except SourcingError as exc:
+                row["procurement"] = error_payload(exc)
+    return result
+
+
+@mcp.tool(annotations=READ_ONLY)
 def szlcsc_jlcpcb_search(
     query: Query,
     library_type: LibraryType = "all",
@@ -126,7 +177,9 @@ def szlcsc_jlcpcb_categories(refresh: bool = False) -> dict:
 @mcp.resource("szlcsc://sourcing-guide", mime_type="text/plain")
 def sourcing_guide() -> str:
     return (
-        "For requirement/family discovery start with szlcsc_discover: inspect coverage, query_errors, "
+        "For a shortlist from natural-language requirements start with szlcsc_select. Preserve its selection "
+        "as previous when the user changes a condition. Present each AD Comment and Description verbatim. "
+        "For exploratory family discovery use szlcsc_discover: inspect coverage, query_errors, "
         "package/pin variants and unknown requirements. Empty results never establish market absence. "
         "Use szlcsc_search / szlcsc_parametric_search for focused searches, then exact szlcsc_get_part. "
         "Before ordering use szlcsc_get_stock and szlcsc_get_pricing with refresh=true. "
@@ -139,14 +192,14 @@ def sourcing_guide() -> str:
 
 @mcp.prompt()
 def select_domestic_component(requirements: str) -> str:
-    """Guide a domestic component selection with explicit evidence and final fresh stock/price checks."""
+    """按中文需求给出最多五个立创候选，支持继续筛选与按数量查价。"""
     return (
-        f"Select a domestic component for: {requirements}\n"
-        "Separate hard constraints from preferences; do not invent a stock/price filter. Start szlcsc_discover "
-        "with functional terms, then inspect returned families and package/pin variants; use family_queries to expand. "
-        "Read coverage/errors/remaining candidates, never call one empty query market absence. Translate electrical constraints and inspect "
-        "constraint_match.all_matched and unknown fields, resolve exact C-codes, verify manufacturer datasheets, "
-        "then refresh domestic stock and CNY pricing for the requested quantity. Report unknowns, advertisement-only prices, "
-        "and conflicts. Q1 suffixes or catalog text do not certify automotive qualification. "
-        "Only use JLCPCB assembly tools when assembly library availability is requested."
+        f"按以下需求选型\n{requirements}\n"
+        "调用 szlcsc_select。明确的硬条件可用 conditions 补充，优先展示有目录依据的匹配。"
+        "把结果的 selection 留在对话上下文。用户只改一项时，将上次 selection 原样作为 previous，"
+        "request 写本轮改动。新器件需求直接开始新查询。"
+        "提供最多五个候选，每行写完整型号、立创料号、关键参数、依据、AD Comment 和 AD Description。"
+        "照录两项 AD 字段。只在用户已给采购数量时查库存和报价。"
+        "依据不足的候选标待核实，指出缺哪项。注明已应用条件以及排除候选最多的条件。"
+        "涉及资质、引脚兼容性和使用边界时核对厂家资料。"
     )

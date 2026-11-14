@@ -111,12 +111,15 @@ def apply_snapshot(part: Part, snapshot: dict[str, Any]) -> None:
         part.warnings.append("Public advertised price has no quantity interval; quantity quote and full ladder are unknown")
 
 
-def unknown_procurement(part: Part, code: str) -> None:
+def unknown_procurement(part: Part, code: str | None = None) -> None:
     """A successful legacy request must not masquerade as current retail data."""
     for name in ("stock", "total_stock", "stock_status", "min_order_qty", "order_multiple",
                  "small_batch_price_cny", "full_pack_qty"):
         setattr(part, name, None)
     part.warehouse_stock = {}
     part.price_tiers = []
-    part.procurement = {"source": "unverified", "quantity_price_verified": False, "error_code": code}
-    part.warnings.append(f"Current public procurement unavailable: {code}; legacy stock/price withheld")
+    if code is None:
+        part.procurement = {"source": "not_requested", "quantity_price_verified": False}
+    else:
+        part.procurement = {"source": "unverified", "quantity_price_verified": False, "error_code": code}
+        part.warnings.append(f"Current public procurement unavailable: {code}; legacy stock/price withheld")

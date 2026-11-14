@@ -69,6 +69,7 @@ class SourcingMiddleware(Middleware):
                 "component_offers",
                 "szlcsc_search",
                 "szlcsc_discover",
+                "szlcsc_select",
                 "szlcsc_parametric_search",
                 "szlcsc_get_part",
                 "szlcsc_get_stock",

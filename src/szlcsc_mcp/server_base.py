@@ -131,7 +131,8 @@ def szlcsc_search(
 ) -> str:
     """搜索国内立创 SZLCSC 的型号/功能关键词；支持封装、品牌、分类、库存及小批量 CNY 单价和分页。
 
-    按需求选型、系列/封装变体发现优先用 szlcsc_discover；本工具每页检查 30 条后返回 max_results 条，
+    中文需求选型优先用 szlcsc_select，系列/封装变体发现用 szlcsc_discover；
+    本工具每页检查 30 条后返回 max_results 条，
     include_coverage=true 返回 {results,count,coverage}，按 coverage.next_cursor 继续，避免跳过页内剩余候选。
     默认保持数组响应兼容。空结果不能当作市场无货。精确详情请用 szlcsc_get_part；电气条件用 szlcsc_parametric_search。
     检查 search_relevance.hard_pass。基础/扩展贴片库请用 szlcsc_jlcpcb_search，库存池不同。
@@ -214,11 +215,13 @@ def szlcsc_discover(
     max_queries: Annotated[int, Field(strict=True, ge=1, le=8)] = 6,
     pages_per_query: Annotated[int, Field(strict=True, ge=1, le=3)] = 2,
     refresh: bool = False,
+    include_procurement: bool = True,
 ) -> str:
     """按功能需求选型与发现系列/封装/引脚数变体，中英文关键词回退、分页、系列扩展并去重。
 
     例如 query="AEC-Q100 isolated CAN"、family_queries=["ISO1042","NSI1042"]。
-    默认不按旧库存/价格提前排除候选；返回 found_by、requirements、constraint_match 和 coverage。
+    只做技术选型时传 include_procurement=false，跳过商品页采购补全，且无需传库存和价格条件。
+    返回 found_by、requirements、constraint_match 和 coverage。
     要检查 coverage.query_errors / remaining_candidates；空结果不证明市场不存在。
     exact_identity=false 的候选不能冒充请求型号；Q1 后缀不证明车规，参数与资格仍核制造商资料。
     未指定封装时优先覆盖不同封装；最终按 C 编号刷新采购数据，公开展示价不等于指定数量报价。
@@ -226,18 +229,19 @@ def szlcsc_discover(
     result = client.discover(query, max_results=max_results, family_queries=family_queries,
                              constraints=constraints, package=package, brand=brand, in_stock=in_stock,
                              max_price=max_price, max_queries=max_queries, pages_per_query=pages_per_query,
-                             refresh=refresh)
+                             refresh=refresh, include_procurement=include_procurement)
     result["results"] = [{**row, "part": _part_payload(row["part"])} for row in result["results"]]
     return _json(result)
 
 
 @mcp.tool(output_schema=None)
-def szlcsc_get_part(identifier: Identifier, refresh: bool = False) -> str:
+def szlcsc_get_part(identifier: Identifier, refresh: bool = False, include_procurement: bool = True) -> str:
     """按精确 C 编号/完整 MPN 获取国内详情、当前公开商品页库存/MOQ、商品资料。
     procurement 区分有数量范围的报价和展示价。PART_NOT_FOUND 仅表示限定查询未命中；系列名请用 szlcsc_discover。
+    只查型号、参数和资料时可传 include_procurement=false，跳过商品页采购补全。
     """
     try:
-        return _json(_part_payload(client.get_part(identifier, refresh=refresh)))
+        return _json(_part_payload(client.get_part(identifier, refresh=refresh, include_procurement=include_procurement)))
     except SZLCSCError as exc:
         return _json(error_payload(exc) | {"source": "szlcsc.com"})
 

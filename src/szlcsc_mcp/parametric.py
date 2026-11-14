@@ -21,6 +21,27 @@ ALIASES: dict[str, tuple[str, ...]] = {
     "capacitance": ("容值", "电容量", "Capacitance"),
     "inductance": ("电感量", "电感", "Inductance"),
     "voltage_rating": ("额定电压", "耐压", "Voltage Rated", "Voltage Rating"),
+    "dielectric": ("介质", "电容介质", "介电材料", "温度特性", "Dielectric", "Temperature Characteristic"),
+    "initial_accuracy": ("初始精度", "Initial Accuracy"),
+    "operating_grade": ("等级", "应用等级", "Quality Grade", "Operating Grade"),
+    "qualification": ("资质", "认证", "车规认证", "Qualification", "Automotive Standard"),
+    "isolation_voltage": ("隔离电压", "隔离耐压", "Isolation Voltage", "Withstand Isolation Voltage"),
+    "reference_type": ("电压基准类型", "基准类型", "Reference Type"),
+    "can_fd": ("CAN FD", "CAN-FD", "协议", "Protocol"),
+    "supply_voltage": ("电源电压", "供电电压", "工作电压", "Supply Voltage"),
+    "data_rate": ("数据速率", "传输速率", "Data Rate"),
+    "operating_temperature": ("工作温度", "Operating Temperature"),
+    "quiescent_current": ("静态电流", "静态电流(Iq)", "Quiescent Current", "Iq"),
+    "drain_source_voltage": ("漏源电压", "漏源耐压", "漏源电压(Vdss)", "Drain to Source Voltage", "Vdss"),
+    "drain_current": ("连续漏极电流", "漏极电流", "Continuous Drain Current", "Id"),
+    "on_resistance": ("导通电阻", "导通电阻(RDS(on))", "On Resistance", "RDS(on)"),
+    "channels": ("通道数", "Channels", "Number of Channels"),
+    "gain_bandwidth": ("增益带宽积", "Gain Bandwidth Product", "GBW"),
+    "input_offset": ("输入失调电压", "Input Offset Voltage"),
+    "core": ("内核", "处理器内核", "Core", "Core Processor"),
+    "flash": ("闪存", "程序存储容量", "Flash", "Program Memory Size"),
+    "ram": ("RAM容量", "RAM", "RAM Size"),
+    "clock_frequency": ("主频", "最大频率", "Clock Frequency", "Speed"),
     "current_rating": ("额定电流", "电流", "Current Rating", "Rated Current"),
     "power": ("功率", "额定功率", "Power", "Power Rating"),
     "package": ("封装", "Package"),
@@ -115,7 +136,7 @@ def _normalize_key(s: str) -> str:
     return re.sub(r"[\s_()（）\-/:：]+", "", s).casefold()
 
 
-def find_parameter(part: Part, name: str) -> tuple[str | None, Any]:
+def find_parameter(part: Part, name: str, *, exact_label: bool = False) -> tuple[str | None, Any]:
     if name.casefold() == "package":
         return "package", part.package
     wanted = [name]
@@ -127,6 +148,8 @@ def find_parameter(part: Part, name: str) -> tuple[str | None, Any]:
         hit = normalized.get(_normalize_key(candidate))
         if hit:
             return hit
+    if exact_label:
+        return None, None
     # Fuzzy fallback: an alias contained in a longer SZLCSC parameter label.
     for candidate in wanted:
         c = _normalize_key(candidate)
@@ -139,7 +162,7 @@ def find_parameter(part: Part, name: str) -> tuple[str | None, Any]:
 
 
 def _parse_constraint(expr: str) -> tuple[str, str]:
-    s = str(expr).strip()
+    s = str(expr).strip().replace("≤", "<=").replace("≥", ">=").replace("≠", "!=").replace("％", "%")
     m = re.match(r"^(<=|>=|==|=|<|>|~=|~|!=)\s*(.+)$", s)
     if m:
         return m.group(1), m.group(2).strip()
@@ -177,26 +200,40 @@ def _numeric_match(actual: Any, expected: str, op: str) -> tuple[bool, str]:
     return ok, f"{av:g} {op} {ev:g}"
 
 
-def match_constraint(part: Part, key: str, expression: str) -> dict[str, Any]:
-    label, actual = find_parameter(part, key)
+def match_constraint(part: Part, key: str, expression: str, *, exact_label: bool = False) -> dict[str, Any]:
+    label, actual = find_parameter(part, key, exact_label=exact_label)
     op, expected = _parse_constraint(expression)
     derived_from_range = None
     if key.casefold() in {"input_voltage_min", "input_voltage_max"}:
         range_label, range_value = label, actual
         if actual is None:
-            range_label, range_value = find_parameter(part, "input_voltage")
+            range_label, range_value = find_parameter(part, "input_voltage", exact_label=exact_label)
         values = parse_number_range(range_value)
         if values:
             if range_label:
                 label = range_label
             actual = min(values, key=lambda x: x.value) if key.casefold().endswith("_min") else max(values, key=lambda x: x.value)
             derived_from_range = range_value if range_value is not None else actual
-    if actual is None:
+    if actual is None or (exact_label and isinstance(actual, str) and actual.strip().casefold() in {"", "-", "--", "—", "n/a", "null"}):
         return {"key": key, "label": label, "expected": expression, "actual": None, "matched": False, "reason": "missing"}
 
     numeric = parse_number(expected)
     if numeric is not None and key.casefold() != "package":
-        matched, reason = _numeric_match(actual, expected, op)
+        measured = parse_number(actual)
+        if exact_label and key.casefold() == "supply_voltage" and op in {"=", "=="}:
+            bounds = parse_number_range(actual)
+            if bounds and all(bound.unit == numeric.unit for bound in bounds):
+                return {"key": key, "label": label, "expected": expression, "actual": actual,
+                        "matched": bounds[0].value <= numeric.value <= bounds[1].value,
+                        "reason": "supply_range"}
+        if exact_label and numeric.unit and measured and not measured.unit:
+            heading = re.search(r"[（(]([^()（）]+)[)）]$", label or "")
+            if heading:
+                measured = parse_number(f"{actual}{heading[1]}")
+            if not measured or not measured.unit:
+                return {"key": key, "label": label, "expected": expression, "actual": actual,
+                        "matched": False, "reason": "unit_unknown"}
+        matched, reason = _numeric_match(measured, expected, op)
     else:
         a = str(actual).strip().casefold()
         e = str(expected).strip().casefold()
@@ -221,8 +258,8 @@ def match_constraint(part: Part, key: str, expression: str) -> dict[str, Any]:
     return result
 
 
-def evaluate_constraints(part: Part, constraints: dict[str, str]) -> dict[str, Any]:
-    results = [match_constraint(part, k, v) for k, v in constraints.items()]
+def evaluate_constraints(part: Part, constraints: dict[str, str], *, exact_labels: bool = False) -> dict[str, Any]:
+    results = [match_constraint(part, k, v, exact_label=exact_labels) for k, v in constraints.items()]
     matched = sum(1 for x in results if x["matched"])
     return {
         "matched": matched,

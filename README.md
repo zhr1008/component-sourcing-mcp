@@ -1,149 +1,68 @@
 # Component Sourcing MCP
 
-用于电子元器件选型、库存/阶梯价查询、资料下载和 Altium 器件库管理的 MCP Server，可接入 Codex 等 MCP 客户端。
+**在 Codex 里用中文查元器件、比较候选，并把选型结果带进 Altium Designer。** 告诉 Codex 需要什么器件、有哪些电气和封装要求，它就能查立创商城并给出最多 5 个候选。每行列出完整订购型号、立创 C 编号、关键参数和来源，以及可直接粘贴到 AD 器件库的 **Comment** 和 **中文 Description**。
 
-当前源码版本为 **0.8.0rc4（预发布候选）**，包含 **51 个工具、两项 Resource 和两项 Prompt**。
+[下载 v0.8.0-rc.4 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.4) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
 
-| 平台或工作流 | 当前状态 |
-|---|---|
-| 国内立创 SZLCSC | 已实现需求/系列/封装变体发现、精确 C 编号/MPN、参数筛选、当前公开库存/MOQ、CNY 报价证据、资料下载；完整阶梯价可能受上游签名接口限制 |
-| JLCPCB 装配库 | 已实现基础/优选/扩展库检索和分类；上游可能返回访问限制 |
-| EasyEDA / Altium | 已实现资料获取；Altium 扫描/写回/转换需显式安装可选依赖，见下方安全限制 |
-| 长期资料库 | 已实现分类归档、离线检索、同步预览、审计、修复、导出和迁移 |
-| 贸泽 Mouser | 已实现官方 Search API 关键词/精确料号、库存与原币阶梯价；需自行申请 Search API Key |
-| DigiKey | 已实现官方 Product Information V4 搜索/详情、包装库存、阶梯价与 OAuth 自动令牌；需自行申请应用凭据 |
-| 华秋 Huaqiu | 提供官方申请渠道和贡献说明；尚无可执行适配器，填写 Key 不会代替正式协议接入 |
+## 在 Codex 里怎么用
 
-Python 模块 `szlcsc_mcp`、原 CLI 别名 `szlcsc-mcp` 和既有 45 个 `szlcsc_*` 工具保留兼容。新增 `component_providers`、`component_search`、`component_get`、`component_offers` 提供统一入口，不用立创 C 编号或 CNY 字段承载其他平台的数据。
+1. **先按电路需求找料。** 「找一颗 3.3 V 电压基准，初始精度 ≤0.2%，SOT-23。给我立创料号和 AD 的 Comment、Description。」
+2. **只说改哪一项。** 「初始精度放宽到 0.5%。」同一对话继续沿用 3.3 V 和 SOT-23 条件。
+3. **有数量再询价。** 「按 100 颗报价。」这时才为候选查当前库存、起订量和适用于该数量的价格。商品页只给展示价时，100 颗的单价和总价会标为待核实。
 
-**多平台申请和配置见 [供应商接入指南](docs/supplier-setup.md)**：每位使用者自行申请 API，填写私有配置文件或环境变量。仓库不提供真实 Key；未配置的平台返回结构化状态，其他平台仍可查询。Mouser/DigiKey 已通过官方契约 Mock 验证，当前维护环境未提供真实账户凭据，尚未完成其授权联网联调。
+也可以用已知的完整料号查封装、找 Datasheet，或按系列补查不同后缀与引脚数。投板前，按完整订购型号核对厂家 Datasheet 中的电气条件、引脚与封装尺寸。
 
-## 安装
+![器件选型架构图。Codex 将中文需求和上轮条件交给立创选型工具，返回最多 5 个候选及 AD 字段。给出采购数量后补查库存与报价。](docs/architecture/component-sourcing-mcp.png)
 
-需要 Python 3.11+，主要验证环境为 Windows + Python 3.12：
+## 能查哪些渠道
+
+| 渠道 | 能查什么 | 使用条件 |
+| --- | --- | --- |
+| **立创商城 SZLCSC** | 中文需求选型、精确料号、封装和参数、公开零售库存和人民币数量报价 | 使用公开数据。部分商品的完整阶梯价需要在商城核对。 |
+| **嘉立创 JLCPCB** | 基础库、优选库、扩展库及装配库存 | 装配库存与立创商城零售库存分别核对。 |
+| **贸泽 Mouser、DigiKey** | 关键词与料号查询、库存和原币阶梯价 | 各平台需自行申请 API 凭据，接口已通过模拟测试。 |
+| **华秋 Huaqiu** | 官方 API 申请渠道 | 适配器待接入。 |
+
+资料工具支持下载 Datasheet、获取 EasyEDA 和 STEP 资产。需要生成、整理或核验 `.SchLib` / `.PcbLib` 时，可按需安装 Altium 扩展。 [供应商申请与配置](docs/supplier-setup.md) · [Altium 库用法](#altium-库与投板核对)
+
+## Windows 安装与接入 Codex
+
+安装 Python 3.12，然后从 Release 的 **Assets** 下载 `component-sourcing-mcp-v0.8.0-rc.4.zip` 并解压。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
 
 ```powershell
-git clone https://github.com/zhr1008/component-sourcing-mcp.git
-Set-Location component-sourcing-mcp
 py -3.12 -m venv .venv
-& '.\.venv\Scripts\python.exe' -X utf8 -m pip install --index-url https://pypi.org/simple --upgrade pip
-& '.\.venv\Scripts\python.exe' -X utf8 -m pip install --index-url https://pypi.org/simple -e .
-& '.\.venv\Scripts\python.exe' -X utf8 -m pip check
-& '.\.venv\Scripts\python.exe' -X utf8 -c "from importlib.metadata import version; print(version('component-sourcing-mcp'))"
+& '.\.venv\Scripts\python.exe' -m pip install .
+& '.\.venv\Scripts\python.exe' -m pip check
 ```
 
-从当前源码构建后，版本检查应显示 `0.8.0rc4`。已发布版本及校验文件见 [Releases](https://github.com/zhr1008/component-sourcing-mcp/releases)。
+接着在 Codex 配置文件中添加 `components` 服务，把配置示例里的路径换成刚才解压的文件夹。重新连接后，先试一句「用 components 查立创 C2040 的型号、封装和 Datasheet，只查目录」。 [Codex 配置示例与连通检查](docs/codex-setup-and-validation.md)
 
-## 接入 Codex
+## Agent 与 Skill
 
-在 `~/.codex/config.toml` 中配置，替换实际路径；已有同名表时修改原表：
+MCP 服务提供实际查询和库文件工具。**`szlcsc` Skill 负责选择工具、保留选型条件、判断证据并组织结果。** 安装时将整个 `skills/szlcsc/` 目录复制到使用者项目的 `.agents/skills/` 下，确保最终路径为 `.agents/skills/szlcsc/SKILL.md`。新开该项目的 Codex 对话，可用 `$szlcsc` 显式调用。MCP 服务需要单独配置。 [Skill 源文件](skills/szlcsc/SKILL.md) · [Codex Skill 安装位置](https://developers.openai.com/api/reference/cli)
 
-```toml
-[mcp_servers.components]
-command = 'C:\src\component-sourcing-mcp\.venv\Scripts\python.exe'
-args = ['-m', 'szlcsc_mcp', '--transport', 'stdio']
-cwd = 'C:\src\component-sourcing-mcp'
-startup_timeout_sec = 30
-tool_timeout_sec = 120
+| 任务 | MCP 工具与参数 |
+| --- | --- |
+| **中文需求选型** | 先调用 `szlcsc_select(request=…)`，通过 `conditions` 补充未识别的硬条件。只改一项时，将上轮 `selection` 原样传给 `previous`。 |
+| **补找系列或确认精确型号** | 用 `szlcsc_discover` 补查系列和封装，用 `szlcsc_get_part` 按完整型号或 C 编号确认。纯技术查询传 `include_procurement=false`。检查 `coverage` 和待核实项。 |
+| **采购复核** | 明确数量后让 `szlcsc_select` 补充报价，或对既定料号调用 `szlcsc_get_stock` 和 `szlcsc_get_pricing`。区分展示价、适用数量的报价和未知值。 |
+| **装配与跨供应商查询** | 嘉立创装配库用 `szlcsc_jlcpcb_search`。跨供应商先看 `component_providers`，再用 `component_search`、`component_get`、`component_offers`。 |
+| **下载资料与操作库文件** | 下载走 `szlcsc_download_part` 或 `szlcsc_eda_assets`。Altium 库文件走 `szlcsc_altium_*`、`szlcsc_ad_library_*`。需要操作 Altium Designer 中的活动文档时，才使用独立的 AD 桥接。 |
 
-[mcp_servers.components.env]
-PYTHONUTF8 = '1'
-SZLCSC_REQUEST_DELAY = '0.5'
-SZLCSC_EDA_REQUEST_DELAY = '0.5'
-```
+选型结果保留各行的 `ad_comment`、`ad_description` 和证据链接。芯片 Comment 使用含订购后缀的完整型号，立创 C 编号单列。参数缺证据时标明具体待核实项。系列查询无结果时说明已查范围。 [完整调用规则](skills/szlcsc/SKILL.md)
 
-重连 MCP 后，先调用 `szlcsc_cache_status` 确认连接，再查料。长批量转换应拆分任务或调整 `tool_timeout_sec`。其他客户端配置见 [mcp.example.json](mcp.example.json)，详细接入与验证见 [Codex 指南](docs/codex-setup-and-validation.md)。
+## Altium 库与投板核对
 
-可选的本地 HTTP：
+基础安装即可返回 AD Comment 和 Description。要直接处理 AD 库文件，需 Python 3.12+，在源码目录为同一环境安装可选扩展。
 
 ```powershell
-& '.\.venv\Scripts\python.exe' -X utf8 -m szlcsc_mcp --transport http --port 8000
+& '.\.venv\Scripts\python.exe' -m pip install '.[altium]'
 ```
 
-客户端地址为 `http://127.0.0.1:8000/mcp`。CLI 只允许回环地址，启用 Host/Origin 防护；HTTP/SSE 没有多用户鉴权，不是公网服务。旧 SSE 客户端可使用 `--transport sse` 的 `/sse` 入口。
+EasyEDA 转 Altium 或合并库还需独立的 `altium-cruncher`。已有库的参数写回默认先预览，实际写回前备份。生成的符号和封装要与厂家文档对照，尤其是 Pin 1、引脚编号、焊盘尺寸和 3D 方位。可选依赖目前存在已知安全公告，处理库文件前请查看说明。 [Windows 转换器安装脚本](scripts/install-altium-cruncher.ps1) · [库操作](skills/szlcsc/SKILL.md) · [依赖安全记录](docs/dependency-security.md) · [本地验收](docs/local-validation.md)
 
-## 工具与数据
+## 开发与贡献
 
-| 任务 | 主要 Tool |
-|---|---|
-| 中文需求选型及 AD 字段 | `szlcsc_select` |
-| 需求/系列/变体发现 | `szlcsc_discover` |
-| 搜索/参数选型 | `szlcsc_search`、`szlcsc_parametric_search`、`szlcsc_get_part` |
-| 库存/数量报价 | `szlcsc_get_stock`、`szlcsc_get_pricing` |
-| 比较与替代 | `szlcsc_compare_parts`、`szlcsc_find_alternatives` |
-| 装配库 | `szlcsc_jlcpcb_search`、`szlcsc_jlcpcb_categories` |
-| 资料/CAD | `szlcsc_download_part`、`szlcsc_download_parts`、`szlcsc_eda_assets` |
-| 已有 Altium 库 | `szlcsc_ad_library_scan`、`szlcsc_ad_library_search`、`szlcsc_ad_library_enrich`、`szlcsc_ad_library_property_apply` |
-| 转换与长期归档 | `szlcsc_altium_import`、`szlcsc_altium_smoke_test`、`szlcsc_library_add`、`szlcsc_library_audit`、`szlcsc_library_migrate` |
-| 诊断/缓存 | `szlcsc_healthcheck`、`szlcsc_cache_status` |
+v0.8.0-rc.4 提供 51 个工具、两个 Resource 和两个 Prompt。Python 模块为 `szlcsc_mcp`，CLI 为 `component-sourcing-mcp`，并兼容 `szlcsc-mcp`。客户端示例、传输设置、测试命令及实时验证说明见接入指南。 [Codex 接入与验证](docs/codex-setup-and-validation.md) · [其他客户端配置](mcp.example.json) · [变更记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [漏洞报告](SECURITY.md)
 
-各任务的工具入口见 [szlcsc 技能](skills/szlcsc/SKILL.md)，统一接口见 [供应商指南](docs/supplier-setup.md)。Resource 包含 `szlcsc://sourcing-guide`、`components://supplier-guide`，Prompt 包含 `select_domestic_component`、`compare_supplier_offers`。
-
-在 Codex 里直接描述需求，例如「找一颗 3.3V 电压基准，初始精度 ≤0.2%，SOT-23」。`szlcsc_select` 返回最多 5 个候选，每行含完整型号、立创料号、关键参数、依据及 `ad_comment`、`ad_description`。已知不符合硬条件的器件会排除，缺少证据的候选会列出待核实项。
-
-接着说「精度放宽到 0.5%」时，客户端把上一轮返回的 `selection` 放入 `previous`，保持其余条件。明确说「按 100 颗报价」时，工具才对短名单查询库存、起订量和数量报价。可用 `conditions` 指定未自动识别的目录参数，值为 `null` 时删除该条件。
-
-需要扩大制造商系列或封装变体的检索范围时，可用 `szlcsc_discover` 和 `family_queries`。精确查料或系列补搜时，传 `include_procurement=false` 可仅获取目录信息。
-
-```text
-szlcsc_discover(query="AEC-Q100 isolated CAN", family_queries=["ISO1042", "NSI1042"], max_results=10, include_procurement=false)
-```
-
-读取每个候选的 `found_by`、`exact_identity`、`requirements`、`constraint_match`，以及 `coverage.query_errors / remaining_candidates / query_budget_reached`。`complete=false` 是明确的检索边界，空结果不能证明市场不存在。资格认证保持 unknown，Q1 后缀或商城描述不代替制造商证据。普通 `szlcsc_search` 默认保持数组响应；设置 `include_coverage=true` 获取 `{results,count,coverage}`，按 `coverage.next_cursor` 的 `page/result_offset` 继续，避免跳过同一页剩余候选。每页读取上游 30 条，`max_results` 是输出上限，不能据此判断已搜尽。
-
-```text
-szlcsc_get_part(identifier="C2040", refresh=true)
-szlcsc_get_stock(identifier="C2040", refresh=true)
-szlcsc_get_pricing(identifier="C2040", quantity=10, refresh=true)
-```
-
-国内报价使用 CNY，明确 MOQ、订购倍数、数量对应的价格阶梯；JLCPCB 装配库存与国内零售库存分别标识。缺失数据保持 null，`data_freshness` 记录缓存/时间信息。库存与报价默认显式刷新；上游失败不静默替换为过期采购数据。
-
-国内采购信息以校验过身份的当前公开商品页覆盖旧移动接口。`procurement` 记录来源、旧接口冲突及报价范围；公开页面只提供展示价时，`advertised_unit_price_cny` 保留该值，`unit_price_cny / line_total_cny` 和无证据的阶梯保持 null/空。展示价没有数量区间时不能套用到 MOQ。服务不复现受保护的 WASM 签名来取得完整阶梯；需要在商品页确认实际数量的报价。商品页快照缓存 5 分钟，`refresh=true` 绕过缓存；只缓存当前商品的必要字段，排除推荐、追踪和会话数据。
-
-错误使用 MCP `isError=true` 和结构化 `error`，包含 `code`、`message`、`retryable` 等字段。部分成功的批量结果还需检查 `complete` 和子项状态。服务不绕过验证码、登录、签名或访问控制。
-
-`szlcsc_library_sync` 和 `szlcsc_library_sync_preview` 会刷新采购数据，每次最多处理 500 项。
-读取 `has_more`、`remaining_count` 和 `next_offset`，把 `next_offset` 作为下次的 `offset` 继续；
-分页期间保持库成员或显式目标列表不变。CSV 导出会把公式形式的文本转成字面文本，JSON 保留原值。
-
-## Altium 与工程核验
-
-默认安装提供查料、报价、资料和归档功能，不安装 Altium 解析器。Altium 集成要求 Python 3.12+，`altium-monkey` 用于读取/保存 SchLib/PcbLib，可显式安装：
-
-```powershell
-& '.\.venv\Scripts\python.exe' -X utf8 -m pip install --index-url https://pypi.org/simple -e '.[altium]'
-```
-
-**Altium 扩展存在尚未解决的第三方依赖漏洞**：上游当前固定的 lxml/Pillow 版本命中安全公告；详见[依赖安全记录](docs/dependency-security.md)。只处理可信库/图像，在独立、低权限环境中使用，暂不视为安全验收通过。基础安装不引入这组依赖。需要 EasyEDA → Altium 或 merge 时，再安装独立转换器：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\install-altium-cruncher.ps1
-```
-
-安装器固定 `altium-cruncher==2026.9.7` 到托管目录，检查原生命令退出码。MCP 依次查找显式 `SZLCSC_ALTIUM_CRUNCHER`、托管目录和 PATH；显式无效路径不会静默回退。
-
-生成库会检查符号/封装关联、真实焊盘尺寸和保存后的可读取性。已有用户库的参数写回默认 dry-run，冲突保持可见，真实写回前备份。服务内文件操作串行处理，但不同进程应使用不同归档/CAD 根目录。
-
-Datasheet 是 pin/package/footprint/electrical 最终判断依据。自动 smoke 和第三方 CAD 都不能代替投板前对 Pin 1、引脚编号、焊盘尺寸、land pattern 和 3D 方位的工程复核。
-
-## 验证与贡献
-
-```powershell
-& '.\.venv\Scripts\python.exe' -X utf8 -m pip install --index-url https://pypi.org/simple -e '.[dev,altium]'
-& '.\.venv\Scripts\python.exe' -X utf8 -m pytest -q
-& '.\.venv\Scripts\python.exe' -X utf8 scripts/check_publication_privacy.py
-& '.\.venv\Scripts\python.exe' -X utf8 scripts/verify_mcp.py --all-transports
-```
-
-单元/Mock 与协议验证不访问上游数据。可选实时探测命令为 `scripts/verify_live.py --output live-results.json`，需要按报告区分 PASS、BLOCKED、FAIL 和 NOT_RUN。本地 Altium 正式验收见 [验收指南](docs/local-validation.md)；未完成验收前只发布预发布版本。
-
-公共 CI 使用 GitHub-hosted runner，并检查完整可达历史的隐私规则。不要提交真实凭据、私人目录、原始日志或用户库。贡献与漏洞报告见 [CONTRIBUTING.md](CONTRIBUTING.md) 和 [SECURITY.md](SECURITY.md)。
-
-本版修复范围见 [实际选型问题记录](docs/audits/selection-recall-2026-10-29.md)，验证见 [rc.3 记录](docs/test-reports/v0.8.0-rc.3-automated.md)。先前的 [全面检查记录](docs/audits/comprehensive-2026-10-29.md)、[rc.2](docs/test-reports/v0.8.0-rc.2-automated.md)、[rc.1](docs/test-reports/v0.8.0-rc.1-automated.md)和 [公开快照](docs/test-reports/v0.7.0-rc.4-automated.md)验证均保留。未提供凭据或上游受限的调用不计为授权联网成功。
-
-## 许可与数据来源
-
-本仓库自有代码使用 [MIT](LICENSE)。可选 Altium 集成的 `altium-monkey` 和 `altium-cruncher` 均声明 **AGPL-3.0-or-later**；包含这些功能的整体分发不能解释为全部仅受 MIT 约束。具体依赖、集成边界和分发前需确认的事项见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。下载的 Datasheet/CAD 资产保留其上游权利。
-
-本项目是独立社区实现，与 SZLCSC、JLCPCB、EasyEDA、Altium、Mouser、华秋和 DigiKey 无官方隶属关系。
+本仓库自有代码采用 MIT 许可证。可选的 `altium-monkey` 和 `altium-cruncher` 采用 AGPL-3.0-or-later。Datasheet 与 CAD 资产保留上游权利。本项目为独立社区实现。 [MIT 许可证](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)

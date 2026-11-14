@@ -3,7 +3,8 @@
 当前源码构建的 Python distribution 为 `component-sourcing-mcp==0.8.0rc4`，模块为
 `szlcsc_mcp`，两个 CLI 名 `component-sourcing-mcp` 和 `szlcsc-mcp` 均可用。
 
-按 README 创建虚拟环境并安装。先用 `python -m pip check` 和
+按 [README 的 Windows 安装步骤](../README.md#windows-安装与接入-codex) 创建虚拟环境并安装。
+先用 `python -m pip check` 和
 `importlib.metadata.version('component-sourcing-mcp')` 核对环境，再配置 Codex。
 
 ```toml
@@ -20,19 +21,29 @@ SZLCSC_REQUEST_DELAY = '0.5'
 SZLCSC_EDA_REQUEST_DELAY = '0.5'
 ```
 
-替换路径，避免重复追加同名 TOML 表。重连后枚举 51 个工具，先调用
-`szlcsc_cache_status`；可用性必须来自实际连接，不能只根据配置文件判断。
-HTTP 配置为 `url = 'http://127.0.0.1:8000/mcp'`，作为 stdio 配置的替代。
+将配置写入 `~/.codex/config.toml`，Windows 的 `~` 是当前用户目录。把 `command` 和 `cwd` 中的示例路径换成解压后的工程路径。已有 `components` 条目时，在原条目中修改。
+重连后，先从 `components` 枚举工具并调用 `szlcsc_cache_status` 核对连接。v0.8.0-rc.4 应列出 51 项工具。
+
+使用本地 HTTP 的客户端可以单独启动服务。
+
+```powershell
+& '.\.venv\Scripts\python.exe' -X utf8 -m szlcsc_mcp --transport http --port 8000
+```
+
+客户端地址为 `http://127.0.0.1:8000/mcp`。HTTP 和旧版 SSE 兼容入口只监听回环地址，使用本机进程权限。旧 SSE 客户端可用 `--transport sse` 和 `/sse` 路径。
 
 贸泽/DigiKey 的申请和私有 JSON 配置见 [供应商指南](supplier-setup.md)。在本节 env 表增加 `COMPONENT_SUPPLIERS_CONFIG` 指向自己的凭据文件；先调用 `component_providers` 检查状态。使用有工具目录缓存的 MCP 懒加载代理时，更新安装后也需刷新该服务的目录缓存。
 
-离线测试：
+开发者可在源码目录安装测试依赖并运行离线验证。
 
-```text
-python -X utf8 -m pytest -q
-python -X utf8 scripts/check_publication_privacy.py
-python -X utf8 scripts/verify_mcp.py --all-transports
+```powershell
+& '.\.venv\Scripts\python.exe' -X utf8 -m pip install -e '.[dev,altium]'
+& '.\.venv\Scripts\python.exe' -X utf8 -m pytest -q
+& '.\.venv\Scripts\python.exe' -X utf8 scripts/check_publication_privacy.py
+& '.\.venv\Scripts\python.exe' -X utf8 scripts/verify_mcp.py --all-transports
 ```
+
+联网探测可运行 `scripts/verify_live.py --output live-results.json`。查看报告中的 PASS、BLOCKED、FAIL 和 NOT_RUN。Altium 实际工程验收见 [本地验证指南](local-validation.md)。
 
 可选的已安装进程功能测试必须指定独立写入目录、实际 wheel 和客户端配置：
 

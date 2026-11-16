@@ -348,7 +348,7 @@ def test_scan_retries_failed_files_until_recovery(monkeypatch, tmp_path, last_go
     monkeypatch.setattr(ad_catalog, "_parse_schlib", parse)
     if last_good:
         assert scan_altium_libraries_resilient([sch], catalog_root=root)["ok"]
-        sch.write_text("changed", encoding="utf-8")
+        sch.write_text("changed catalog input", encoding="utf-8")
     fail = True
     for _ in range(2):
         result = scan_altium_libraries_resilient([sch], catalog_root=root)

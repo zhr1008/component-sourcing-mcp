@@ -2,7 +2,7 @@
 
 **在 Codex 里用中文查元器件、比较候选，并把选型结果带进 Altium Designer。** 告诉 Codex 需要什么器件、有哪些电气和封装要求，它就能查立创商城并给出最多 5 个候选。每行列出完整订购型号、立创 C 编号、关键参数和来源，以及可直接粘贴到 AD 器件库的 **Comment** 和 **中文 Description**。
 
-[下载 v0.8.0-rc.5 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.5) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
+[下载 v0.8.0-rc.6 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.6) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
 
 ## 在 Codex 里怎么用
 
@@ -27,7 +27,7 @@
 
 ## Windows 安装与接入 Codex
 
-安装 Python 3.12，下载 [v0.8.0-rc.5 安装包](https://github.com/zhr1008/component-sourcing-mcp/releases/download/v0.8.0-rc.5/component-sourcing-mcp-v0.8.0-rc.5.zip) 并解压。ZIP 同时包含 MCP 源码和 `$component-sourcing` Skill。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
+安装 Python 3.12，下载 [v0.8.0-rc.6 安装包](https://github.com/zhr1008/component-sourcing-mcp/releases/download/v0.8.0-rc.6/component-sourcing-mcp-v0.8.0-rc.6.zip) 并解压。ZIP 同时包含 MCP 源码和 `$component-sourcing` Skill。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
 
 ```powershell
 py -3.12 -m venv .venv
@@ -50,10 +50,13 @@ MCP 服务提供实际查询和库文件工具。**`$component-sourcing` Skill �
 | **采购复核** | 明确数量后让 `szlcsc_select` 补充报价，或对既定料号调用 `szlcsc_get_stock` 和 `szlcsc_get_pricing`。区分展示价、适用数量的报价和未知值。 |
 | **装配与跨供应商查询** | 嘉立创装配库用 `szlcsc_jlcpcb_search`。跨供应商先看 `component_providers`，再用 `component_search`、`component_get`、`component_offers`。 |
 | **下载资料与离线检查 Altium** | 下载走 `szlcsc_download_part` 或 `szlcsc_eda_assets`。查库图元、校验和比对用可选的 `altium-offline-library`，读已保存的工程、原理图和 PCB 用 Skill 自带脚本。 |
+| **按 C 号一键生成 AD 库** | 仅在用户明确要求下载封装或一键生成时调用 `szlcsc_altium_build`。随后阅读原厂资料并用 `szlcsc_altium_verify_bundle` 核对证据。 |
 
 选型结果保留各行的 `ad_comment`、`ad_description` 和证据链接。芯片 Comment 使用含订购后缀的完整型号，立创 C 编号单列。参数缺证据时标明具体待核实项。系列查询无结果时说明已查范围。 [完整调用规则](skills/component-sourcing/SKILL.md)
 
 ## Altium 库与投板核对
+
+明确发起「用 `$component-sourcing` 给 `C5291487` 一键下载封装、转换并核对 AD 库」即可。输出按 `完整型号_C号` 命名，例如 `TPR3333-S3TR_C5291487`，含 SchLib、PcbLib、独立 STEP 和核验报告，STEP 同时嵌入 PcbLib。普通选型和查型号继续走查询工具。 [一键流程与核验边界](docs/altium-offline.md)
 
 用 `$component-sourcing` 可以**离线查库和盘点已保存的工程**。读取和核对 `.SchLib` / `.PcbLib` 走独立库文件 MCP，已保存的 `.PrjPcb` / `.SchDoc` / `.PcbDoc` 走 Skill 自带脚本。离线路径无需启动 Altium Designer。 [离线工具接入](docs/altium-offline.md)
 
@@ -67,6 +70,6 @@ EasyEDA 转 Altium 或合并库还需独立的 `altium-cruncher`。已有库的�
 
 ## 开发与贡献
 
-本版提供 51 个工具、两个 Resource 和两个 Prompt。Python 模块为 `szlcsc_mcp`，CLI 为 `component-sourcing-mcp`，并兼容 `szlcsc-mcp`。客户端示例、传输设置、测试命令及实时验证说明见接入指南。 [Codex 接入与验证](docs/codex-setup-and-validation.md) · [其他客户端配置](mcp.example.json) · [变更记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [漏洞报告](SECURITY.md)
+本版提供 53 个工具、两个 Resource 和两个 Prompt。Python 模块为 `szlcsc_mcp`，CLI 为 `component-sourcing-mcp`，并兼容 `szlcsc-mcp`。客户端示例、传输设置、测试命令及实时验证说明见接入指南。 [Codex 接入与验证](docs/codex-setup-and-validation.md) · [其他客户端配置](mcp.example.json) · [变更记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [漏洞报告](SECURITY.md)
 
 本仓库自有代码采用 MIT 许可证。可选的 `altium-monkey` 和 `altium-cruncher` 采用 AGPL-3.0-or-later。Datasheet 与 CAD 资产保留上游权利。本项目为独立社区实现。 [MIT 许可证](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)

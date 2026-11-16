@@ -30,7 +30,7 @@ def _pcb_models(symbol):
             if str(model.model_type).casefold() == "pcblib"]
 
 
-def link_generated_libraries(schlibs: list[str], pcblibs: list[str]) -> dict:
+def link_generated_libraries(schlibs: list[str], pcblibs: list[str], *, renamed: bool = False) -> dict:
     AltiumPcbLib, AltiumSchLib = load_altium_parser()
 
     if not schlibs or not pcblibs:
@@ -65,7 +65,19 @@ def link_generated_libraries(schlibs: list[str], pcblibs: list[str]) -> dict:
                     symbol.add_footprint(name, library_name=pcb.name)
                     pending.append(symbol.name)
                 for name, pcb in candidates:
-                    expectations.append((symbol.name, name))
+                    if renamed:
+                        for model in _pcb_models(symbol):
+                            if (str(model.model_name).casefold() == name.casefold()
+                                    and model.datafile_entity != pcb.name):
+                                children = list(model.children)
+                                symbol.remove_object(model)
+                                model.model_datafiles = [("", pcb.name, "PCBLib")]
+                                model.datafile_count = 1
+                                model.datafile_entity = pcb.name
+                                model.datafile_kind = "PCBLib"
+                                symbol.add_implementation(model, children)
+                                pending.append(symbol.name)
+                    expectations.append((symbol.name, name, pcb.name if renamed else None))
                     rows.append({"symbol": symbol.name, "schlib": str(path),
                                  "footprint": name, "pcblib": str(pcb),
                                  "created": symbol.name in pending})
@@ -88,10 +100,13 @@ def link_generated_libraries(schlibs: list[str], pcblibs: list[str]) -> dict:
 
 
 def _verify_links(library, expectations):
-    for symbol_name, footprint_name in expectations:
+    for symbol_name, footprint_name, pcb_name in expectations:
         symbol = library.get_symbol(symbol_name)
-        if symbol is None or not any(str(model.model_name).casefold() == footprint_name.casefold()
-                                     for model in _pcb_models(symbol)):
+        if symbol is None or not any(
+            str(model.model_name).casefold() == footprint_name.casefold()
+            and (pcb_name is None or model.datafile_entity == pcb_name)
+            for model in _pcb_models(symbol)
+        ):
             raise LibraryLinkError(f"saved symbol lost its footprint implementation: {symbol_name}")
 
 

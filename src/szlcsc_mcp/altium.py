@@ -346,6 +346,7 @@ def run_altium_import(
             cmd,
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=max(10, int(timeout)),
             check=False,
         )

@@ -48,6 +48,16 @@ def test_ambiguous_footprints_do_not_modify_output(tmp_path):
     assert sch.read_bytes() == before
 
 
+def test_renamed_generated_library_updates_saved_filename_reference(tmp_path):
+    sch, pcb = libraries(tmp_path)
+    link_generated_libraries([str(sch)], [str(pcb)])
+    renamed = pcb.rename(tmp_path / "TPR3333-S3TR_C5291487.PcbLib")
+    link_generated_libraries([str(sch)], [str(renamed)], renamed=True)
+    implementation, = AltiumSchLib(sch).symbols[0].implementations
+    assert implementation.model_name == "SOT23"
+    assert implementation.datafile_entity == renamed.name
+
+
 def test_existing_conflicting_link_is_not_replaced(tmp_path):
     sch, pcb = libraries(tmp_path)
     library = AltiumSchLib(sch)

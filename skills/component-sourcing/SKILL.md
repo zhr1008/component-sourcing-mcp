@@ -21,6 +21,7 @@ description: Use when selecting electronic components from 立创 SZLCSC, JLCPCB
 | 核对手头的采购料号 | 库存用 `szlcsc_get_stock`。数量报价用 `szlcsc_get_pricing`，带上明确数量。 |
 | 区分装配库和跨供应商采购 | JLCPCB 用 `szlcsc_jlcpcb_search`。跨供应商用 `component_providers`、`component_search`、`component_get`、`component_offers`。 |
 | 下载资料、生成或整理库文件 | 见 [Datasheet](#三datasheet)、[新建 Altium 库](#四easyeda--新器件-altium-生成)和[已有库整理](#五已有-altium-schlibpcblib-整理v06)。 |
+| 明确要求一键生成 AD 库或下载封装 | `szlcsc_altium_build`，再用 `szlcsc_altium_verify_bundle` 核对证据。 |
 
 ## 多供应商入口
 
@@ -177,6 +178,18 @@ szlcsc_sync_datasheets(identifiers=[...], output_dir="...")
 - 下载结果需通过 PDF 内容检查。
 
 ## 四、EasyEDA / 新器件 Altium 生成
+
+### 明确要求时一键生成并核对 AD 库
+
+只有用户明确说「一键生成／转换并核对 AD 库」或「下载封装」才走本节。只写 C 号、查询型号或做普通选型时使用查询工具。只要原始 EasyEDA 资产时调用 `szlcsc_eda_assets`。
+
+1. 按准确的立创 C 号调用 `szlcsc_altium_build`，指定可写的新输出目录。使用 `完整订购型号_C号` 命名目录、SchLib、PcbLib 和 STEP。产物中应有嵌入的 STEP，且改名后的 PcbLib 引用须从保存的 SchLib 中读回。缺少 STEP 或转换失败时报告具体问题。
+2. 用户给出目标工程时，先用 `inspect_saved.py` 从已保存的 `.PrjPcb` 确认对应板文件，再将其 `.PcbDoc` 路径传给 `target_board`。多板工程按用户指定的板核对。产物与目标板分开保存。
+3. 实际阅读原厂 Datasheet，确认覆盖完全一致的订购型号和封装。对照 `report_path` 中的 `observations`，把独立取得的期望值用 `szlcsc_altium_verify_bundle` 的 `expected` 提交。每项填 `group`、`field`、`value`、`source`、`reference`，Datasheet 必填实际页码 `page`。数值按报告单位和原点对齐，容差来自引用的资料。先完成有证据的字段，缺项保留待核实。
+4. 核对引脚编号、定义与电气类型、焊盘编号和几何、孔径、阻焊／锡膏模式及机械层用途。同一板的实际开窗按适用规则确定。只有看过实际 STEP 几何并与原厂图对照 Pin 1、贴板方向后才填写 `orientation`。转换器的 placement 告警也需保留。提供了目标板时，按板厂或工程规范对照已保存的物理层叠和规则。
+5. 交付库文件和 `verification.json`。将 `generated` 与核验结论分开报告，分别列出已通过、不符合和待核实。默认全程用离线 CAD 工具，生成资产时联网下载。任务缺少证据时继续保留待核实。只有用户另行明确要求 AD 原生 ERC／DRC、活动文档或 ECO 时才进入 AD 桥接。
+
+### 单独下载、转换或诊断
 
 需要 EasyEDA 资产：
 

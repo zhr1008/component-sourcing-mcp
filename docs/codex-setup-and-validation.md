@@ -1,6 +1,6 @@
 # Codex 接入与验证
 
-当前源码构建的 Python distribution 为 `component-sourcing-mcp==0.8.0rc5`，模块为
+当前源码构建的 Python distribution 为 `component-sourcing-mcp==0.8.0rc6`，模块为
 `szlcsc_mcp`，两个 CLI 名 `component-sourcing-mcp` 和 `szlcsc-mcp` 均可用。
 
 按 [README 的 Windows 安装步骤](../README.md#windows-安装与接入-codex) 创建虚拟环境并安装。
@@ -22,7 +22,7 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 ```
 
 将配置写入 `~/.codex/config.toml`，Windows 的 `~` 是当前用户目录。把 `command` 和 `cwd` 中的示例路径换成解压后的工程路径。已有 `components` 条目时，在原条目中修改。
-重连后，先从 `components` 枚举工具并调用 `szlcsc_cache_status` 核对连接。v0.8.0-rc.5 应列出 51 项工具。
+重连后，先从 `components` 枚举工具并调用 `szlcsc_cache_status` 核对连接。v0.8.0-rc.6 应列出 53 项工具。一键转换会下载 CAD 和 PDF，慢连接可在 `[mcp_servers.components]` 下设置 `tool_timeout_sec = 360`。
 
 使用本地 HTTP 的客户端可以单独启动服务。
 
@@ -48,7 +48,7 @@ SZLCSC_EDA_REQUEST_DELAY = '0.5'
 可选的已安装进程功能测试必须指定独立写入目录、实际 wheel 和客户端配置：
 
 ```text
-python -X utf8 scripts/test_installed_functional.py network --server-name components --output-root C:/ComponentTest/isolated --wheel C:/Downloads/component_sourcing_mcp-0.8.0rc5-py3-none-any.whl
+python -X utf8 scripts/test_installed_functional.py network --server-name components --output-root C:/ComponentTest/isolated --wheel C:/Downloads/component_sourcing_mcp-0.8.0rc6-py3-none-any.whl
 ```
 
 该脚本核对解释器、配置中的 server command、发行版版本和 wheel 源码一致性。

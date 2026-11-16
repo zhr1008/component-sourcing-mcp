@@ -14,7 +14,8 @@ def evidence(group, field, value, **kwargs):
 
 def report():
     return {"target_board": "design.PcbDoc", "observations": {
-        "pins": {"numbers": ["1", "2"], "pin.1[1].name": "VIN"},
+        "pins": {"numbers": ["1", "2"], "pin.1[1].name": "VIN",
+                 "pin.1[1].electrical_type": "Passive"},
         "pads": {"pad.1[1].width_mm": 1.02},
         "paste_mask": {"pad.1[1].mode": "rule", "pad.1[1].expansion_mm": None},
         "orientation_3d": {"body.1.rotation_z": 90.0},
@@ -26,18 +27,21 @@ def test_evidence_compares_dimensions_and_cannot_turn_unknown_into_zero():
     checks = _review(report(), [
         evidence("pins", "numbers", ["1", "2"]),
         evidence("pins", "pin.1[1].name", "VIN"),
+        evidence("pins", "pin.1[1].electrical_type", "Input"),
         evidence("pads", "pad.1[1].width_mm", 1.0, tolerance=0.03),
         evidence("paste_mask", "pad.1[1].mode", "rule"),
         evidence("paste_mask", "pad.1[1].expansion_mm", 0),
         evidence("orientation_3d", "body.1.rotation_z", 90),
     ], None)["review"]
     assert checks["pins"]["status"] == "pass"
+    assert checks["pins"]["checks"]["pin.1[1].electrical_type"]["status"] == "notice"
     assert checks["pads"]["status"] == "pass"
     assert checks["paste_mask"]["checks"]["pad.1[1].expansion_mm"]["status"] == "pending"
     assert checks["orientation_3d"]["checks"]["pin1_alignment"]["status"] == "pending"
     assert checks["board_rules"]["checks"]["native_drc"]["status"] == "pending"
     mismatch = _review(report(), [evidence("pins", "pin.1[1].name", "GND")], None)
     assert mismatch["review_status"] == "fail"
+    assert mismatch["review"]["pins"]["checks"]["pin.1[1].electrical_type"]["status"] == "not_reviewed"
 
 
 def test_evidence_needs_a_real_field_and_datasheet_locator():

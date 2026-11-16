@@ -197,14 +197,16 @@ def _review(report, expected, orientation):
         rows = {}
         for field, actual in facts.items():
             item = by_field.get((group, field))
+            advisory = group == "pins" and field.endswith(".electrical_type")
             if item is None or actual is None or actual == []:
-                rows[field] = {"status": "pending", "actual": actual}
+                rows[field] = {"status": "not_reviewed" if advisory else "pending", "actual": actual}
                 continue
             value = item.value
             numeric = type(actual) in (float, int) and type(value) in (float, int)
             match = (math.isfinite(value) and abs(actual - value) <= item.tolerance if numeric
                      else type(actual) is type(value) and actual == value)
-            rows[field] = {"status": "pass" if match else "fail", "actual": actual,
+            status = "pass" if match else "notice" if advisory else "fail"
+            rows[field] = {"status": status, "actual": actual,
                            "evidence": item.model_dump()}
         if group == "orientation_3d":
             rows["pin1_alignment"] = {"status": "pending"} if orientation is None else {
@@ -213,7 +215,7 @@ def _review(report, expected, orientation):
             }
         if group == "board_rules" and report["target_board"]:
             rows["native_drc"] = {"status": "pending", "reason": "离线列出已保存规则，AD 原生 DRC 尚待执行"}
-        states = {row["status"] for row in rows.values()}
+        states = {row["status"] for row in rows.values()} - {"notice", "not_reviewed"}
         status = "fail" if "fail" in states else "pass" if states == {"pass"} else "pending"
         if group in BOARD_GROUPS and not report["target_board"]:
             status = "not_requested"

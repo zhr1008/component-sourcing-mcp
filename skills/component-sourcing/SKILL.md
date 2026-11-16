@@ -186,8 +186,8 @@ szlcsc_sync_datasheets(identifiers=[...], output_dir="...")
 1. 按准确的立创 C 号调用 `szlcsc_altium_build`，指定可写的新输出目录。使用 `完整订购型号_C号` 命名目录、SchLib、PcbLib 和 STEP。产物中应有嵌入的 STEP，且改名后的 PcbLib 引用须从保存的 SchLib 中读回。缺少 STEP 或转换失败时报告具体问题。
 2. 用户给出目标工程时，先用 `inspect_saved.py` 从已保存的 `.PrjPcb` 确认对应板文件，再将其 `.PcbDoc` 路径传给 `target_board`。多板工程按用户指定的板核对。产物与目标板分开保存。
 3. 实际阅读原厂 Datasheet，确认覆盖完全一致的订购型号和封装。对照 `report_path` 中的 `observations`，把独立取得的期望值用 `szlcsc_altium_verify_bundle` 的 `expected` 提交。每项填 `group`、`field`、`value`、`source`、`reference`，Datasheet 必填实际页码 `page`。数值按报告单位和原点对齐，容差来自引用的资料。先完成有证据的字段，缺项保留待核实。
-4. 核对引脚编号、定义与电气类型、焊盘编号和几何、孔径、阻焊／锡膏模式及机械层用途。同一板的实际开窗按适用规则确定。只有看过实际 STEP 几何并与原厂图对照 Pin 1、贴板方向后才填写 `orientation`。转换器的 placement 告警也需保留。提供了目标板时，按板厂或工程规范对照已保存的物理层叠和规则。
-5. 交付库文件和 `verification.json`。将 `generated` 与核验结论分开报告，分别列出已通过、不符合和待核实。默认全程用离线 CAD 工具，生成资产时联网下载。任务缺少证据时继续保留待核实。只有用户另行明确要求 AD 原生 ERC／DRC、活动文档或 ECO 时才进入 AD 桥接。
+4. 核对引脚编号与定义、焊盘编号和几何、孔径、阻焊／锡膏模式及机械层用途。符号电气类型（例如默认 Passive）仅作提示。同一板的实际开窗按适用规则确定。只有看过实际 STEP 几何并与原厂图对照 Pin 1、贴板方向后才填写 `orientation`。转换器的 placement 告警也需保留。提供了目标板时，按板厂或工程规范对照已保存的物理层叠和规则。
+5. 交付库文件和 `verification.json`。将 `generated` 与核验结论分开报告，分别列出已通过、不符合、待核实和提示。默认全程用离线 CAD 工具，生成资产时联网下载。任务缺少证据时继续保留待核实。只有用户另行明确要求 AD 原生 ERC／DRC、活动文档或 ECO 时才进入 AD 桥接。
 
 ### 单独下载、转换或诊断
 

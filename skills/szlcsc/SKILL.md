@@ -137,6 +137,29 @@ szlcsc_jlcpcb_categories(refresh=false)
 
 关键上限：搜索/候选池 1–50，compare 20、下载 100、Datasheet 同步 200、Altium import batch 50、smoke 5；非空列表不得被静默截断。可读取 `szlcsc://sourcing-guide` 或获取 `select_domestic_component` Prompt 辅助选型。
 
+### 离线操作 Altium 库与已保存工程
+
+磁盘文件任务使用以下入口。只读核对只调用读工具。库写入在用户指定的副本进行，写后重新读取，检查步骤始终以磁盘文件为准。
+
+本机未配置离线服务时，可参考仓库根目录下的 `docs/altium-offline.md`。离线服务的目录权限由 `allowed_paths` 管理。
+
+| 输入或任务 | 使用方式 |
+| --- | --- |
+| `.SchLib` / `.PcbLib` 的引脚、焊盘、封装链接和几何检查 | 优先用 `altium-offline-library` MCP。用 `list_components` 查名称、`read_schlib` / `read_pcblib` 查图元、`validate_library` 查结构、`diff_libraries` 查差异。需要查看静态外观时用 `render_symbol` / `render_footprint`。 |
+| 生成、复制或更新库条目 | 用 `altium-offline-library` 操作已授权的库副本。EasyEDA 转换、采购身份与 AD 属性补全仍用 `szlcsc_altium_*` / `szlcsc_ad_library_*`。可参考已装的 `altium-library` Skill 核对 Datasheet、焊盘和引脚。 |
+| `.PrjPcb`、`.SchDoc`、`.PcbDoc` | 用本技能的 [inspect_saved.py](scripts/inspect_saved.py) 读文件。先用工程清单识别目标，再把具体图纸或板文件传给脚本。 |
+| 原理图封装链接、单针网络和驱动冲突初筛 | 如已装 `altium-schematic-review`，用它自带的 `audit_footprints.py <SchDoc> --libs <库目录>`、`net_erc.py <SchDoc>`。结合层级连接、器件分件和厂家资料复核候选问题。 |
+
+用已安装 `altium-monkey` 的 Python 3.12 执行，例如复用 `components` 的 Altium 扩展环境。以下为在本技能目录运行的例子，也可用脚本绝对路径。
+
+```text
+python -X utf8 scripts/inspect_saved.py path/to/Design.PrjPcb
+python -X utf8 scripts/inspect_saved.py path/to/Sheet.SchDoc --designator U1
+python -X utf8 scripts/inspect_saved.py path/to/Board.PcbDoc --designator U1
+```
+
+`PrjPcb` 列出工程登记的文档路径，`SchDoc` 给出位号、Comment、引脚数量及封装引用，`PcbDoc` 给出器件及焊盘、走线、网络数量。输出标注 `source=saved_file`，列表默认前 30 项，可用 `--limit` 调整。仅当当前任务明确要求活动文档、未保存内容、原生编译/ERC/DRC 或 ECO 时，才走 AD 桥接。遇到离线工具缺失、解析失败或证据不足时，报告具体缺口，不自动改用 AD。
+
 ## 三、Datasheet
 
 批量同步：

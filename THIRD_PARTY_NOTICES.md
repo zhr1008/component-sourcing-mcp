@@ -34,6 +34,14 @@ does not change the upstream licenses or replace that review.
 This repository does not bundle either project's source or executable in its
 source tree or project wheel; package installers retrieve them separately.
 
+## Optional offline workflow tools
+
+[embedded-society/altium-designer-mcp](https://github.com/embedded-society/altium-designer-mcp)
+v1.4.0 is a separate GPL-3.0-or-later MCP process for library files.
+[ScottJeong/altium-claude-skills](https://github.com/scottjeong/altium-claude-skills)
+at `586ca3d` provides MIT-licensed, separately installed skills and review scripts.
+Their binaries and source are distributed by the respective upstream projects.
+
 ## Data sources and engineering assets
 
 SZLCSC/LCSC, JLCPCB, EasyEDA and Altium are third-party names and services. This

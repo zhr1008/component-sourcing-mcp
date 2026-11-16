@@ -47,11 +47,13 @@ MCP 服务提供实际查询和库文件工具。**`szlcsc` Skill 负责选择�
 | **补找系列或确认精确型号** | 用 `szlcsc_discover` 补查系列和封装，用 `szlcsc_get_part` 按完整型号或 C 编号确认。纯技术查询传 `include_procurement=false`。检查 `coverage` 和待核实项。 |
 | **采购复核** | 明确数量后让 `szlcsc_select` 补充报价，或对既定料号调用 `szlcsc_get_stock` 和 `szlcsc_get_pricing`。区分展示价、适用数量的报价和未知值。 |
 | **装配与跨供应商查询** | 嘉立创装配库用 `szlcsc_jlcpcb_search`。跨供应商先看 `component_providers`，再用 `component_search`、`component_get`、`component_offers`。 |
-| **下载资料与操作库文件** | 下载走 `szlcsc_download_part` 或 `szlcsc_eda_assets`。Altium 库文件走 `szlcsc_altium_*`、`szlcsc_ad_library_*`。需要操作 Altium Designer 中的活动文档时，才使用独立的 AD 桥接。 |
+| **下载资料与离线检查 Altium** | 下载走 `szlcsc_download_part` 或 `szlcsc_eda_assets`。查库图元、校验和比对用可选的 `altium-offline-library`，读已保存的工程、原理图和 PCB 用 Skill 自带脚本。 |
 
 选型结果保留各行的 `ad_comment`、`ad_description` 和证据链接。芯片 Comment 使用含订购后缀的完整型号，立创 C 编号单列。参数缺证据时标明具体待核实项。系列查询无结果时说明已查范围。 [完整调用规则](skills/szlcsc/SKILL.md)
 
 ## Altium 库与投板核对
+
+装好的 `szlcsc` Skill 可直接引导**离线查库和工程盘点**。读取和核对 `.SchLib` / `.PcbLib` 走独立库文件 MCP，已保存的 `.PrjPcb` / `.SchDoc` / `.PcbDoc` 走 Skill 自带脚本。离线路径无需启动 Altium Designer。 [离线工具接入](docs/altium-offline.md)
 
 基础安装即可返回 AD Comment 和 Description。要直接处理 AD 库文件，需 Python 3.12+，在源码目录为同一环境安装可选扩展。
 

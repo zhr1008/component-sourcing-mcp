@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-rc.5
+
+- 发布包内的 Skill 统一为 `$component-sourcing`。旧版提示词里的 `$szlcsc` 可按 README 迁移，原有 MCP 工具名和 CLI 入口继续兼容。
+- 补充离线查库与已保存工程的使用路径。通过 `altium-offline-library` 读查 `.SchLib` 和 `.PcbLib`，通过 Skill 自带脚本检查已保存的 `.PrjPcb`、`.SchDoc` 和 `.PcbDoc`。
+- 更新 README 架构图、下载入口和安装说明。
+
 ## 0.8.0-rc.4
 
 - 新增中文选型入口 `szlcsc_select`。每次最多返回 5 个候选，包含立创料号、关键参数、证据和可复制的 AD Comment、Description。

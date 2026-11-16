@@ -2,7 +2,7 @@
 
 **在 Codex 里用中文查元器件、比较候选，并把选型结果带进 Altium Designer。** 告诉 Codex 需要什么器件、有哪些电气和封装要求，它就能查立创商城并给出最多 5 个候选。每行列出完整订购型号、立创 C 编号、关键参数和来源，以及可直接粘贴到 AD 器件库的 **Comment** 和 **中文 Description**。
 
-[下载 v0.8.0-rc.4 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.4) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
+[下载 v0.8.0-rc.5 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.5) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
 
 ## 在 Codex 里怎么用
 
@@ -27,7 +27,7 @@
 
 ## Windows 安装与接入 Codex
 
-安装 Python 3.12，然后从 Release 的 **Assets** 下载 `component-sourcing-mcp-v0.8.0-rc.4.zip` 并解压。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
+安装 Python 3.12，下载 [v0.8.0-rc.5 安装包](https://github.com/zhr1008/component-sourcing-mcp/releases/download/v0.8.0-rc.5/component-sourcing-mcp-v0.8.0-rc.5.zip) 并解压。ZIP 同时包含 MCP 源码和 `$component-sourcing` Skill。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
 
 ```powershell
 py -3.12 -m venv .venv
@@ -67,6 +67,6 @@ EasyEDA 转 Altium 或合并库还需独立的 `altium-cruncher`。已有库的�
 
 ## 开发与贡献
 
-v0.8.0-rc.4 提供 51 个工具、两个 Resource 和两个 Prompt。Python 模块为 `szlcsc_mcp`，CLI 为 `component-sourcing-mcp`，并兼容 `szlcsc-mcp`。客户端示例、传输设置、测试命令及实时验证说明见接入指南。 [Codex 接入与验证](docs/codex-setup-and-validation.md) · [其他客户端配置](mcp.example.json) · [变更记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [漏洞报告](SECURITY.md)
+本版提供 51 个工具、两个 Resource 和两个 Prompt。Python 模块为 `szlcsc_mcp`，CLI 为 `component-sourcing-mcp`，并兼容 `szlcsc-mcp`。客户端示例、传输设置、测试命令及实时验证说明见接入指南。 [Codex 接入与验证](docs/codex-setup-and-validation.md) · [其他客户端配置](mcp.example.json) · [变更记录](CHANGELOG.md) · [贡献指南](CONTRIBUTING.md) · [漏洞报告](SECURITY.md)
 
 本仓库自有代码采用 MIT 许可证。可选的 `altium-monkey` 和 `altium-cruncher` 采用 AGPL-3.0-or-later。Datasheet 与 CAD 资产保留上游权利。本项目为独立社区实现。 [MIT 许可证](LICENSE) · [第三方许可](THIRD_PARTY_NOTICES.md)

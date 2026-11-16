@@ -1,9 +1,9 @@
 # 离线处理 Altium 库与已保存的工程
 
-在 Codex 里用 `$szlcsc` 发起任务即可。先指定要看的是哪份磁盘文件，库要写入时注明目标副本。
+在 Codex 里用 `$component-sourcing` 发起任务即可。先指定要看的是哪份磁盘文件，库要写入时注明目标副本。
 
-- 「用 szlcsc 核对这份 PcbLib 里指定封装的焊盘，并和另一份库比较。」
-- 「用 szlcsc 读这份 PrjPcb，列出工程文档，然后检查指定 SchDoc 的器件和封装引用。」
+- 「用 $component-sourcing 核对这份 PcbLib 里指定封装的焊盘，并和另一份库比较。」
+- 「用 $component-sourcing 读这份 PrjPcb，列出工程文档，然后检查指定 SchDoc 的器件和封装引用。」
 
 ## 库文件 MCP
 
@@ -27,7 +27,7 @@ args = ['D:/Tools/altium-designer-mcp/library-config.json']
 
 ## 工程、原理图和 PCB
 
-使用已安装 `altium-monkey` 的 Python 3.12 环境，例如本项目安装 `.[altium]` 的环境。运行 `skills/szlcsc/scripts/inspect_saved.py`，或运行安装后的 `szlcsc` Skill 目录下的同一脚本。
+使用已安装 `altium-monkey` 的 Python 3.12 环境，例如本项目安装 `.[altium]` 的环境。运行 [inspect_saved.py](../skills/component-sourcing/scripts/inspect_saved.py)，或运行安装后的 `component-sourcing` Skill 目录下的同一脚本。
 
 | 文件 | 离线结果 |
 | --- | --- |

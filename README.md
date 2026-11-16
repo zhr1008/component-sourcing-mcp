@@ -39,7 +39,9 @@ py -3.12 -m venv .venv
 
 ## Agent 与 Skill
 
-MCP 服务提供实际查询和库文件工具。**`szlcsc` Skill 负责选择工具、保留选型条件、判断证据并组织结果。** 安装时将整个 `skills/szlcsc/` 目录复制到使用者项目的 `.agents/skills/` 下，确保最终路径为 `.agents/skills/szlcsc/SKILL.md`。新开该项目的 Codex 对话，可用 `$szlcsc` 显式调用。MCP 服务需要单独配置。 [Skill 源文件](skills/szlcsc/SKILL.md) · [Codex Skill 安装位置](https://developers.openai.com/api/reference/cli)
+MCP 服务提供实际查询和库文件工具。**`$component-sourcing` Skill 负责选择工具、保留选型条件、判断证据并组织结果。** 将整个 `skills/component-sourcing/` 目录复制到 `~/.agents/skills/` 供各工程使用，或复制到单个工程的 `.agents/skills/`。新开 Codex 对话即可用 `$component-sourcing` 显式调用。MCP 服务需要单独配置。 [Skill 源文件](skills/component-sourcing/SKILL.md) · [Codex Skill 安装位置](https://developers.openai.com/api/reference/cli)
+
+从旧版升级时，移除安装目录里的旧 `szlcsc` Skill 副本，把提示词里的 `$szlcsc` 换成 `$component-sourcing`。工具仍按 `szlcsc_select`、`szlcsc_get_part` 等原名调用。
 
 | 任务 | MCP 工具与参数 |
 | --- | --- |
@@ -49,11 +51,11 @@ MCP 服务提供实际查询和库文件工具。**`szlcsc` Skill 负责选择�
 | **装配与跨供应商查询** | 嘉立创装配库用 `szlcsc_jlcpcb_search`。跨供应商先看 `component_providers`，再用 `component_search`、`component_get`、`component_offers`。 |
 | **下载资料与离线检查 Altium** | 下载走 `szlcsc_download_part` 或 `szlcsc_eda_assets`。查库图元、校验和比对用可选的 `altium-offline-library`，读已保存的工程、原理图和 PCB 用 Skill 自带脚本。 |
 
-选型结果保留各行的 `ad_comment`、`ad_description` 和证据链接。芯片 Comment 使用含订购后缀的完整型号，立创 C 编号单列。参数缺证据时标明具体待核实项。系列查询无结果时说明已查范围。 [完整调用规则](skills/szlcsc/SKILL.md)
+选型结果保留各行的 `ad_comment`、`ad_description` 和证据链接。芯片 Comment 使用含订购后缀的完整型号，立创 C 编号单列。参数缺证据时标明具体待核实项。系列查询无结果时说明已查范围。 [完整调用规则](skills/component-sourcing/SKILL.md)
 
 ## Altium 库与投板核对
 
-装好的 `szlcsc` Skill 可直接引导**离线查库和工程盘点**。读取和核对 `.SchLib` / `.PcbLib` 走独立库文件 MCP，已保存的 `.PrjPcb` / `.SchDoc` / `.PcbDoc` 走 Skill 自带脚本。离线路径无需启动 Altium Designer。 [离线工具接入](docs/altium-offline.md)
+用 `$component-sourcing` 可以**离线查库和盘点已保存的工程**。读取和核对 `.SchLib` / `.PcbLib` 走独立库文件 MCP，已保存的 `.PrjPcb` / `.SchDoc` / `.PcbDoc` 走 Skill 自带脚本。离线路径无需启动 Altium Designer。 [离线工具接入](docs/altium-offline.md)
 
 基础安装即可返回 AD Comment 和 Description。要直接处理 AD 库文件，需 Python 3.12+，在源码目录为同一环境安装可选扩展。
 
@@ -61,7 +63,7 @@ MCP 服务提供实际查询和库文件工具。**`szlcsc` Skill 负责选择�
 & '.\.venv\Scripts\python.exe' -m pip install '.[altium]'
 ```
 
-EasyEDA 转 Altium 或合并库还需独立的 `altium-cruncher`。已有库的参数写回默认先预览，实际写回前备份。生成的符号和封装要与厂家文档对照，尤其是 Pin 1、引脚编号、焊盘尺寸和 3D 方位。可选依赖目前存在已知安全公告，处理库文件前请查看说明。 [Windows 转换器安装脚本](scripts/install-altium-cruncher.ps1) · [库操作](skills/szlcsc/SKILL.md) · [依赖安全记录](docs/dependency-security.md) · [本地验收](docs/local-validation.md)
+EasyEDA 转 Altium 或合并库还需独立的 `altium-cruncher`。已有库的参数写回默认先预览，实际写回前备份。生成的符号和封装要与厂家文档对照，尤其是 Pin 1、引脚编号、焊盘尺寸和 3D 方位。可选依赖目前存在已知安全公告，处理库文件前请查看说明。 [Windows 转换器安装脚本](scripts/install-altium-cruncher.ps1) · [库操作](skills/component-sourcing/SKILL.md) · [依赖安全记录](docs/dependency-security.md) · [本地验收](docs/local-validation.md)
 
 ## 开发与贡献
 

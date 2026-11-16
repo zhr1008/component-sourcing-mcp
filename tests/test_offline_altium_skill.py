@@ -8,7 +8,7 @@ import sys
 import pytest
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "skills" / "szlcsc" / "scripts" / "inspect_saved.py"
+SCRIPT = Path(__file__).resolve().parents[1] / "skills" / "component-sourcing" / "scripts" / "inspect_saved.py"
 
 
 def read_saved(path, *args):

@@ -1,9 +1,9 @@
 ---
-name: szlcsc
+name: component-sourcing
 description: Use when selecting electronic components from 立创 SZLCSC, JLCPCB, Mouser or DigiKey, comparing MPN/C codes, electrical specs and package, checking stock/MOQ/quantity pricing, or retrieving Datasheets, EasyEDA/STEP and Altium SchLib/PcbLib assets. 包括按中文需求选型、连续调整筛选条件、AD Comment 和 Description。
 ---
 
-# SZLCSC — 国内立创选型、资料、Altium 与已有库整理
+# Component Sourcing — 器件选型、采购、资料与 Altium 库
 
 用户要求国内立创商城、`item.szlcsc.com`、人民币按数量报价、实时/分仓库存、Cxxxx/MPN、封装与电气参数选型、JLCPCB 基础/优选/扩展贴片库、Datasheet、EasyEDA/STEP、Altium 库，或整理已有 SchLib/PcbLib 时使用本技能。
 

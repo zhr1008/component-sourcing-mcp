@@ -3,6 +3,7 @@
 import argparse
 import io
 import json
+import os
 import sys
 import unicodedata
 import zipfile
@@ -283,14 +284,19 @@ def render_xlsx(headings, values, draft):
     return book.getvalue()
 
 
-def write_atomic(path, contents):
+def write_atomic(path, contents, *, no_clobber=False):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = None
     try:
         with NamedTemporaryFile(dir=path.parent, delete=False) as temporary:
             temporary_path = Path(temporary.name)
             temporary.write(contents)
-        temporary_path.replace(path)
+        if not no_clobber:
+            temporary_path.replace(path)
+        elif os.name == "nt":
+            temporary_path.rename(path)
+        else:
+            os.link(temporary_path, path)
     finally:
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
@@ -305,6 +311,7 @@ def main(argv=None):
     excel.add_argument("--xlsx-only", action="store_true", help="只生成 Excel，保留同名 HTML")
     parser.add_argument("--draft", action="store_true", help="允许导入选型候选并标为待核对")
     parser.add_argument("--write-rows", type=Path, help="写待核对 JSON 底稿，可与 --draft 单独使用")
+    parser.add_argument("--no-clobber", action="store_true", help="仅创建新文件，拒绝覆盖现有输出")
     args = parser.parse_args(argv)
     if not args.output and not args.write_rows:
         parser.error("提供 --output STEM 或 --draft --write-rows FILE.json。")
@@ -337,8 +344,12 @@ def main(argv=None):
         paths = [path.resolve() for path in outputs]
         if (not read_stdin and args.input.resolve() in paths) or len(set(paths)) != len(paths):
             raise ValueError("输入、底稿和导出文件需要使用不同路径。")
+        if args.no_clobber:
+            for path in outputs:
+                if path.exists() or path.is_symlink():
+                    raise FileExistsError(f"输出文件已存在，请另选路径。{path}")
         for path, content in outputs.items():
-            write_atomic(path, content)
+            write_atomic(path, content, no_clobber=args.no_clobber)
             print(path)
     except (OSError, ValueError) as exc:
         parser.error(str(exc))

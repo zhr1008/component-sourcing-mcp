@@ -1,10 +1,13 @@
 import json
+import runpy
 import subprocess
 import sys
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
 from xml.etree import ElementTree
+
+import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "skills/component-sourcing/scripts/render_ad_selection.py"
@@ -108,9 +111,38 @@ def test_nonpassive_html_default_and_excel_backfill_does_not_replace_it(tmp_path
     modified_date = html_file.stat().st_mtime_ns
     assert not stem.with_suffix(".xlsx").exists()
     assert Table(old_html.decode()).rows[0] == ["型号（Comment）", "料号", "用途", "封装", "具体描述", "商品页链接"]
-    assert run_cli(path, "--output", stem, "--xlsx-only").returncode == 0
+    assert run_cli(path, "--output", stem, "--xlsx-only", "--no-clobber").returncode == 0
     assert html_file.read_bytes() == old_html and html_file.stat().st_mtime_ns == modified_date
     assert read_spreadsheet(stem.with_suffix(".xlsx"))[1] == Table(old_html.decode()).rows
+
+
+def test_no_clobber_checks_all_targets_and_default_allows_replacement(tmp_path):
+    path = write_json(tmp_path / "reviewed.json", {"reviewed": True, "rows": [reviewed_row()]})
+    stem = tmp_path / "selection"
+    excel = stem.with_suffix(".xlsx")
+    html = stem.with_suffix(".html")
+    excel.write_bytes(b"existing workbook")
+
+    result = run_cli(path, "--output", stem, "--xlsx", "--no-clobber")
+    assert result.returncode != 0 and "输出文件已存在" in result.stderr
+    assert excel.read_bytes() == b"existing workbook"
+    assert not html.exists()
+
+    result = run_cli(path, "--output", stem, "--xlsx")
+    assert result.returncode == 0, result.stderr
+    assert read_spreadsheet(excel)[1] == Table(html.read_text(encoding="utf-8")).rows
+
+
+def test_no_clobber_final_write_protects_target_created_after_preflight(tmp_path):
+    write_atomic = runpy.run_path(str(SCRIPT))["write_atomic"]
+    target = tmp_path / "selection.html"
+    target.write_bytes(b"other writer")
+
+    with pytest.raises(FileExistsError):
+        write_atomic(target, b"new selection", no_clobber=True)
+
+    assert target.read_bytes() == b"other writer"
+    assert list(tmp_path.iterdir()) == [target]
 
 
 def test_raw_mcp_candidates_are_draft_and_prepare_does_not_render(tmp_path):

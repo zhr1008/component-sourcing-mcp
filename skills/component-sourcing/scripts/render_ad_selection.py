@@ -146,6 +146,29 @@ def candidate_row(payload):
     }
 
 
+def technical_lookup_rows(payload):
+    rows = []
+    skipped = 0
+    for item in payload["results"]:
+        if not isinstance(item, dict):
+            raise ValueError("批查结果的每项必须是 JSON 对象。")
+        if item.get("status") != "found":
+            skipped += 1
+            continue
+        part = item.get("part")
+        if not isinstance(part, dict) or not (part.get("lcsc_code") or part.get("mpn")):
+            raise ValueError("批查命中条目缺少器件详情或料号。")
+        rows.append({
+            "lcsc_code": part.get("lcsc_code"),
+            "package": part.get("package"),
+            "product_url": part.get("product_url"),
+            "source": dict(part, identifier=item.get("identifier"), input_rows=item.get("input_rows")),
+        })
+    if skipped or payload.get("blank_count"):
+        print("批查未取得详情的项目保留在来源报告，底稿只包含已命中条目。", file=sys.stderr)
+    return rows
+
+
 def load_rows(payload, draft=False):
     payload = unwrap_payload(payload)
     if "rows" in payload:
@@ -156,10 +179,13 @@ def load_rows(payload, draft=False):
             raise ValueError("核对字段后明确设置 reviewed: true，或显式预览 --draft。")
     else:
         if not draft:
-            raise ValueError("szlcsc_select 的 results 是候选。使用 --draft --write-rows 生成待核对底稿。")
+            raise ValueError("工具结果是候选或技术详情，需要先核对。使用 --draft --write-rows 生成待核对底稿。")
         if not isinstance(payload["results"], list):
             raise ValueError("results 必须是 JSON 数组。")
-        values = [candidate_row(row) for row in payload["results"]]
+        if "input_count" in payload and "unique_count" in payload:
+            values = technical_lookup_rows(payload)
+        else:
+            values = [candidate_row(row) for row in payload["results"]]
     if not isinstance(values, list) or not values:
         raise ValueError("选型表至少需要一条记录。")
 

@@ -56,7 +56,7 @@ MCP 服务提供实际查询和库文件工具。**`$component-sourcing` Skill �
 
 查已有型号、库存、数量价或资料时，默认直接给出答案。形成设计用 AD 选型清单时，技能用固定模板在本地从已核对的 JSON 生成可逐格复制的 HTML。Excel 按需用同一份数据生成，封装、位号和料号均按文本写入。原始选型响应可先转成待核对的 JSON 底稿。 [确定性导出流程与命令](skills/component-sourcing/references/ad-selection-export.md)
 
-有一份精确 C 号或完整 MPN 清单时，可用技能内的批量查料脚本。它通过现有 Codex stdio `components` 会话复用重复查询，并输出可供后续流程使用的逐项详情及原行索引。 [批量查料用法](skills/component-sourcing/references/batch-lookup.md)
+有一份精确 C 号或完整 MPN 清单时，用技能内的批量查料脚本。它通过现有 Codex stdio `components` 会话查询，每批按料号去重，续跑可读取仍适用的上次报告只补缺项。按实际目标选择定向查询、批量核对、选型或专项核验。 [批量查料](skills/component-sourcing/references/batch-lookup.md) · [分级流程](skills/component-sourcing/references/selection-depth.md)
 
 ## Altium 库与投板核对
 

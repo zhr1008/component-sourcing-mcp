@@ -14,9 +14,13 @@ import sys
 TOOL = "szlcsc_get_part"
 STOP_CODES = {"RATE_LIMITED", "ACCESS_DENIED"}
 C_CODE = re.compile(r"c[0-9]+", re.IGNORECASE)
+PROCUREMENT_FIELDS = (
+    "stock", "total_stock", "stock_status", "in_stock", "min_order_qty",
+    "order_multiple", "small_batch_price_cny", "full_pack_qty",
+)
 
 
-def plan_queries(path, column=None):
+def plan_queries(path, column=None, skip_blank=False):
     if path.suffix.lower() == ".csv":
         if column is None:
             raise ValueError("CSV 输入必须用 --column 指定料号列")
@@ -28,6 +32,9 @@ def plan_queries(path, column=None):
             index = header.index(column)
             values = []
             for row in reader:
+                if not row and skip_blank:
+                    values.append("")
+                    continue
                 if len(row) != len(header):
                     raise ValueError(f"CSV 第 {len(values) + 2} 条记录的列数与表头不一致")
                 values.append(row[index])
@@ -41,10 +48,14 @@ def plan_queries(path, column=None):
         raise ValueError("使用 JSON 数组，或用 --column 指定 CSV 的料号列")
 
     unique = {}
+    blank_rows = []
     for row, value in enumerate(values, start=start):
         if not isinstance(value, str):
             raise ValueError(f"第 {row} 条必须是料号文本，前导零依原文保留")
         identifier = value.strip()
+        if not identifier and skip_blank:
+            blank_rows.append(row)
+            continue
         if not identifier or len(identifier) > 200 or any(ord(char) < 32 or ord(char) == 127 for char in identifier):
             raise ValueError(f"第 {row} 条缺少可用的完整料号")
         compact_code = re.sub(r"\s+", "", identifier)
@@ -52,9 +63,9 @@ def plan_queries(path, column=None):
             identifier = compact_code.upper()
         item = unique.setdefault(identifier.casefold(), {"identifier": identifier, "input_rows": []})
         item["input_rows"].append(row)
-    if not unique:
+    if not unique and not blank_rows:
         raise ValueError("输入至少需要一条完整 C 号或完整 MPN")
-    return len(values), list(unique.values())
+    return len(values), list(unique.values()), blank_rows
 
 
 def component_config():
@@ -116,6 +127,52 @@ def part_result(body, identifier):
     return {"status": "found", "part": body}
 
 
+def access_issue(part):
+    warnings = part.get("warnings")
+    if isinstance(warnings, list):
+        for warning in warnings:
+            if isinstance(warning, str):
+                code = warning.rsplit(": ", 1)[-1]
+                if code in STOP_CODES:
+                    return code
+    return None
+
+
+def reusable_parts(path):
+    report = json.loads(path.read_text(encoding="utf-8-sig"))
+    if not isinstance(report, dict) or not isinstance(report.get("results"), list):
+        raise ValueError("--reuse 需要此前保存的完整批查报告 JSON")
+    parts = {}
+    for row in report["results"]:
+        if not isinstance(row, dict) or row.get("status") != "found":
+            continue
+        identifier, part = row.get("identifier"), row.get("part")
+        if not isinstance(identifier, str) or not isinstance(part, dict):
+            continue
+        procurement = part.get("procurement")
+        warnings = part.get("warnings")
+        detail_failed = isinstance(warnings, list) and any(
+            isinstance(warning, str) and warning.startswith("Detail enrichment failed: ")
+            for warning in warnings
+        )
+        if (
+            not isinstance(procurement, dict) or procurement.get("source") != "not_requested"
+            or procurement.keys() - {"source", "quantity_price_verified"}
+            or procurement.get("quantity_price_verified") is not False
+            or any(part.get(field) is not None for field in PROCUREMENT_FIELDS)
+            or part.get("warehouse_stock") not in (None, {})
+            or part.get("price_tiers") not in (None, [])
+            or part_result(part, identifier)["status"] != "found"
+            or detail_failed or access_issue(part)
+        ):
+            continue
+        key = identifier.casefold()
+        if key in parts:
+            raise ValueError("--reuse 报告含重复的可复用料号")
+        parts[key] = part
+    return parts
+
+
 async def lookup(session, queries, refresh=False, timeout=120):
     results = []
     stopped = None
@@ -140,14 +197,8 @@ async def lookup(session, queries, refresh=False, timeout=120):
         error_code = result.get("error", {}).get("code")
         if isinstance(error_code, str) and error_code in STOP_CODES:
             stopped = error_code
-        warnings = result.get("part", {}).get("warnings") or []
-        if isinstance(warnings, list) and not stopped:
-            for warning in warnings:
-                if isinstance(warning, str):
-                    code = warning.rsplit(": ", 1)[-1]
-                    if code in STOP_CODES:
-                        stopped = code
-                        break
+        elif "part" in result:
+            stopped = access_issue(result["part"])
     return results
 
 
@@ -193,12 +244,27 @@ def main(argv=None):
     parser.add_argument("input", type=Path, help="精确 C 号/完整 MPN 的 JSON 数组或 CSV")
     parser.add_argument("--column", help="CSV 要查询的唯一列名")
     parser.add_argument("--output", type=Path, help="保存完整结果的新 JSON 文件")
-    parser.add_argument("--plan", action="store_true", help="只统计输入、去重和行号，不发起查询")
-    parser.add_argument("--refresh", action="store_true", help="只在需要最新静态详情时绕过缓存")
+    parser.add_argument("--plan", action="store_true", help="只统计输入、复用和待查项，不发起查询")
+    parser.add_argument("--reuse", type=Path, help="复用上次完整 JSON 报告里的精确技术详情")
+    parser.add_argument("--skip-blank", action="store_true", help="跳过空白料号并报告原行")
+    parser.add_argument("--refresh", action="store_true", help="重新查询全部料号并绕过缓存")
     args = parser.parse_args(argv)
     try:
-        count, queries = plan_queries(args.input, args.column)
-        summary = {"input_count": count, "unique_count": len(queries)}
+        count, queries, blank_rows = plan_queries(args.input, args.column, args.skip_blank)
+        previous = reusable_parts(args.reuse) if args.reuse and not args.refresh else {}
+        reused = {}
+        pending = []
+        for query in queries:
+            identifier = query["identifier"]
+            part = previous.get(identifier.casefold())
+            if part is None:
+                pending.append(query)
+            else:
+                reused[identifier] = {**query, "status": "found", "part": part, "reused": True}
+        summary = {
+            "input_count": count, "unique_count": len(queries), "reused": len(reused),
+            "to_query": len(pending), "blank_count": len(blank_rows),
+        }
         if args.plan:
             if args.output:
                 raise ValueError("--plan 从标准输出返回计划，不创建文件")
@@ -208,11 +274,13 @@ def main(argv=None):
             raise ValueError("--output 需要新的 .json 文件")
         if args.output and not args.output.parent.is_dir():
             raise ValueError("--output 的目录需要已存在")
-        results = asyncio.run(query_configured(queries, args.refresh))
+        queried = asyncio.run(query_configured(pending, args.refresh)) if pending else []
+        by_identifier = reused | {row["identifier"]: row for row in queried}
+        results = [by_identifier[query["identifier"]] for query in queries]
         summary.update({status: sum(item["status"] == status for item in results)
                         for status in ("found", "error", "unqueried")})
-        summary["status"] = "complete" if summary["found"] == len(queries) else "partial"
-        report = {**summary, "results": results}
+        summary["status"] = "complete" if summary["found"] == len(queries) and not blank_rows else "partial"
+        report = {**summary, "results": results, "blank_rows": blank_rows}
         if args.output:
             write_report(args.output, report)
             report = {**summary, "output": str(args.output)}

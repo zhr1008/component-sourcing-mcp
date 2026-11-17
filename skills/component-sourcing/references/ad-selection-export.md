@@ -12,6 +12,8 @@ python -X utf8 scripts/render_ad_selection.py candidates.json --draft --write-ro
 
 这一步只生成待核对的 JSON。每行的 `source` 保留工具原始型号、品牌、规格和证据，便于按 C 编号复查。导出只读取并列的表格字段。现行 `szlcsc_select` 只为部分阻容提供通用描述，缺少的具体描述在底稿里保留「待核实」。按精确 C 编号对照对应商品页的原字段，再核对原厂规格的电气适用性和适用封装。沿用已核过的字段和证据，只更新变化的行。字段核对完成后，把 `reviewed` 改为 `true`。也可在数据核对阶段直接写下面的结构，跳过底稿转换。
 
+任务明确需要 AD 底稿时，同一命令也可直接读 `batch_lookup.py --output` 生成的完整报告。命中项填入 C 号、封装和链接，并保留原始记录与行号。Comment、Description 和工程字段留作待核对，未查或失败项从原报告跟进。
+
 ## 已核对的输入规格
 
 ```json

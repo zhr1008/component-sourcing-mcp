@@ -157,3 +157,25 @@ def test_bad_url_hidden_chars_wrong_text_type_and_tool_error_fail_before_outputs
     for value in inputs:
         assert run_cli("-", "--output", stem, payload=value).returncode != 0
         assert not stem.with_suffix(".html").exists()
+
+
+def test_batch_report_handoff_keeps_evidence_and_only_drafts_found_items(tmp_path):
+    part = {"lcsc_code": C_CODE, "mpn": "TEST-0402", "package": "0402", "product_url": PRODUCT,
+            "parameters": {"功率": "100mW"}, "procurement": {"source": "not_requested"}}
+    report = {"status": "partial", "input_count": 3, "unique_count": 2, "results": [
+        {"identifier": C_CODE, "input_rows": [1, 3], "status": "found", "part": part},
+        {"identifier": "OTHER", "input_rows": [2], "status": "error"},
+    ]}
+    source = write_json(tmp_path / "technical.json", report)
+    draft = tmp_path / "draft.json"
+    result = run_cli(source, "--draft", "--write-rows", draft)
+    assert result.returncode == 0, result.stderr
+    assert "来源报告" in result.stderr
+    assert not list(tmp_path.glob("*.html"))
+    data = json.loads(draft.read_text(encoding="utf-8"))
+    assert data["reviewed"] is False and len(data["rows"]) == 1
+    row = data["rows"][0]
+    assert (row["lcsc_code"], row["package"], row["product_url"]) == (C_CODE, "0402", PRODUCT)
+    assert row["specific_description"] == row["ad_comment"] == "待核实"
+    assert row["source"]["input_rows"] == [1, 3] and row["source"]["parameters"] == part["parameters"]
+    assert run_cli(draft, "--output", tmp_path / "final").returncode != 0

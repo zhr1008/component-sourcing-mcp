@@ -42,6 +42,7 @@ for line in sys.stdin:
                 "parameters": {"Unit": "100mW"},
                 "product_url": "https://example.org/item",
                 "total_stock": None,
+                "procurement": {"source": "not_requested", "quantity_price_verified": False},
                 "data_freshness": {"cache_hits": 1},
             }
             if identifier == "C900000002":
@@ -185,6 +186,97 @@ def test_stdout_csv_retains_logical_source_rows_and_normalizes_c_code(
     }}]
 
 
+def test_reuse_partial_report_checks_static_details_and_merges_current_rows(
+    monkeypatch, tmp_path, capsys, installed_components,
+):
+    _, config_calls, audit = installed_components
+    previous_input = write_json(tmp_path / "previous-input.json", ["C900000001", "C900000002"])
+    previous_report = tmp_path / "previous.json"
+    code, output = run_cli(monkeypatch, capsys, previous_input, "--output", previous_report)
+    assert code == 1, output.err
+    old = json.loads(previous_report.read_text(encoding="utf-8"))
+    template = old["results"][0]["part"]
+    old["results"].extend([
+        {"identifier": "C900000006", "status": "found", "part": {
+            **template, "lcsc_code": "C900000006", "total_stock": 0,
+        }},
+        {"identifier": "C900000007", "status": "found", "part": {
+            **template, "lcsc_code": "C900000007", "price_tiers": [{"unit_price": 1}],
+        }},
+        {"identifier": "C900000009", "status": "found", "part": {
+            **template, "lcsc_code": "C900000009", "warnings": ["Detail enrichment failed: INVALID_RESPONSE"],
+        }},
+        {"identifier": "C900000010", "status": "found", "part": {
+            **template, "lcsc_code": "C900000011",
+        }},
+        {"identifier": "C900000012", "status": "unqueried"},
+    ])
+    write_json(previous_report, old)
+    source = write_json(tmp_path / "current.json", [
+        "C900000002", "c900000001", "C900000006", "C900000001", "C900000007", "C900000009",
+        "C900000010", "C900000012",
+    ])
+    code, output = run_cli(monkeypatch, capsys, source, "--reuse", previous_report)
+    assert code == 1, output.err
+    report = json.loads(output.out)
+    assert (report["reused"], report["to_query"], report["found"]) == (1, 6, 6)
+    assert report["results"][0]["error"]["code"] == "PART_NOT_FOUND"
+    assert report["results"][1]["reused"] is True
+    assert report["results"][1]["input_rows"] == [2, 4]
+    assert report["results"][1]["part"] == template
+    assert len(config_calls) == 2
+    assert [entry["arguments"]["identifier"] for entry in read_requests(audit)[2:]] == [
+        "C900000002", "C900000006", "C900000007", "C900000009", "C900000010", "C900000012",
+    ]
+
+
+def test_all_reused_and_plan_skip_mcp_and_refresh_bypasses_report(
+    monkeypatch, tmp_path, capsys, installed_components,
+):
+    _, config_calls, audit = installed_components
+    source = write_json(tmp_path / "current.json", ["Fixture-MPN/NOPB"])
+    previous_report = write_json(tmp_path / "previous.json", {"results": [{
+        "identifier": "fixture-mpn/nopb", "status": "found", "part": {
+            "mpn": "Fixture-MPN/NOPB", "procurement": {"source": "not_requested", "quantity_price_verified": False},
+        },
+    }]})
+    code, output = run_cli(monkeypatch, capsys, source, "--reuse", previous_report, "--plan")
+    assert code == 0, output.err
+    summary = json.loads(output.out)
+    assert (summary["status"], summary["reused"], summary["to_query"]) == ("planned", 1, 0)
+    code, output = run_cli(monkeypatch, capsys, source, "--reuse", previous_report)
+    assert code == 0, output.err
+    assert json.loads(output.out)["results"][0]["reused"] is True
+    assert not config_calls and not audit.with_suffix(".started").exists()
+    code, output = run_cli(monkeypatch, capsys, source, "--reuse", previous_report, "--refresh")
+    assert code == 0, output.err
+    summary = json.loads(output.out)
+    assert (summary["reused"], summary["to_query"]) == (0, 1)
+    assert read_requests(audit)[0]["arguments"]["refresh"] is True
+
+
+def test_skip_blank_records_source_lines_and_all_blank_never_starts_mcp(
+    monkeypatch, tmp_path, capsys, installed_components,
+):
+    _, config_calls, audit = installed_components
+    source = tmp_path / "source.csv"
+    source.write_text('ID,note\n,missing\n\nC900000001,"two\nlines"\n ,missing\n', encoding="utf-8-sig")
+    assert run_cli(monkeypatch, capsys, source, "--column", "ID")[0] == 2
+    code, output = run_cli(monkeypatch, capsys, source, "--column", "ID", "--skip-blank")
+    assert code == 1, output.err
+    report = json.loads(output.out)
+    assert (report["input_count"], report["blank_count"], report["found"]) == (4, 3, 1)
+    assert report["blank_rows"] == [2, 3, 5]
+    assert report["results"][0]["input_rows"] == [4]
+    assert [entry["arguments"]["identifier"] for entry in read_requests(audit)] == ["C900000001"]
+    all_blank = write_json(tmp_path / "blank.json", ["", " "])
+    code, output = run_cli(monkeypatch, capsys, all_blank, "--skip-blank")
+    assert code == 1, output.err
+    report = json.loads(output.out)
+    assert report["blank_rows"] == [1, 2] and not report["results"]
+    assert len(config_calls) == 1
+
+
 def test_invalid_input_and_existing_output_stop_before_mcp(monkeypatch, tmp_path, capsys, installed_components):
     _, config_calls, audit = installed_components
     csv = tmp_path / "parts.csv"
@@ -193,6 +285,8 @@ def test_invalid_input_and_existing_output_stop_before_mcp(monkeypatch, tmp_path
     invalid = write_json(tmp_path / "bad.json", {"identifier": "C900000001"})
     assert run_cli(monkeypatch, capsys, invalid)[0] == 2
     source = write_json(tmp_path / "parts.json", ["C900000001"])
+    incomplete_report = write_json(tmp_path / "summary.json", {"status": "complete"})
+    assert run_cli(monkeypatch, capsys, source, "--reuse", incomplete_report)[0] == 2
     existing = tmp_path / "evidence.json"
     existing.write_text("original", encoding="utf-8")
     assert run_cli(monkeypatch, capsys, source, "--output", existing)[0] == 2

@@ -54,6 +54,8 @@ MCP 服务提供实际查询和库文件工具。**`$component-sourcing` Skill �
 
 选型结果保留各行的 `ad_comment`、`ad_description` 和证据链接。芯片 Comment 使用含订购后缀的完整型号，立创 C 编号单列。参数缺证据时标明具体待核实项。系列查询无结果时说明已查范围。 [完整调用规则](skills/component-sourcing/SKILL.md)
 
+查已有型号、库存、数量价或资料时，默认直接给出答案。形成设计用 AD 选型清单时，技能用固定模板在本地从已核对的 JSON 生成可逐格复制的 HTML。Excel 按需用同一份数据生成，封装、位号和料号均按文本写入。原始选型响应可先转成待核对的 JSON 底稿。 [确定性导出流程与命令](skills/component-sourcing/references/ad-selection-export.md)
+
 ## Altium 库与投板核对
 
 明确发起「用 `$component-sourcing` 给 `C5291487` 一键下载封装、转换并核对 AD 库」即可。输出按 `完整型号_C号` 命名，例如 `TPR3333-S3TR_C5291487`，含 SchLib、PcbLib、独立 STEP 和核验报告，STEP 同时嵌入 PcbLib。普通选型和查型号继续走查询工具。 [一键流程与核验边界](docs/altium-offline.md)

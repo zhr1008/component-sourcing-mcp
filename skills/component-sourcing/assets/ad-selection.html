@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>$title</title>
+<style>
+  :root { color-scheme: light; font: 15px/1.45 "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+  body { margin: 1.5rem; color: #172437; background: #f7f9fc; }
+  h1 { margin: 0 0 0.35rem; font-size: 1.55rem; }
+  header p { margin: 0 0 0.75rem; }
+  .draft { color: #7b3703; font-weight: 600; }
+  .table-wrap { overflow-x: auto; border: 1px solid #bbc7d7; border-radius: 0.35rem; }
+  table { width: 100%; border-collapse: collapse; background: #fff; }
+  th, td { padding: 0.42rem 0.65rem; text-align: left; vertical-align: top; }
+  th { background: #e5ecf6; white-space: nowrap; }
+  td { border-top: 1px solid #d6dfea; }
+  tr:nth-child(even) td { background: #f3f6fa; }
+  button { max-width: 100%; padding: 0.18rem 0.25rem; border: 1px solid transparent; border-radius: 0.2rem;
+    background: none; color: inherit; font: inherit; text-align: left; white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; }
+  button:hover, button:focus-visible { border-color: #416db3; background: #e7efff; }
+  a { color: #15488b; font-size: 0.9rem; white-space: nowrap; }
+  #status { min-height: 1.5em; margin: 0.55rem 0; color: #345175; }
+  .clipboard-fallback { position: fixed; left: -10000px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>$title</h1>
+  $draft_note
+  <p>点击单元格复制字段值。</p>
+</header>
+<div class="table-wrap">
+  <table>
+    <thead><tr>$headings</tr></thead>
+    <tbody>
+$rows
+    </tbody>
+  </table>
+</div>
+<p id="status" role="status"></p>
+<script>
+  function copyFromField(value, button) {
+    const field = document.createElement("textarea");
+    field.className = "clipboard-fallback";
+    field.value = value;
+    field.readOnly = true;
+    document.body.appendChild(field);
+    try {
+      field.select();
+      return document.execCommand("copy");
+    } finally {
+      field.remove();
+      button.focus({preventScroll: true});
+    }
+  }
+
+  document.querySelector("table").addEventListener("click", async (event) => {
+    const button = event.target.closest("button[data-copy]");
+    if (!button) return;
+    const value = button.dataset.copy;
+    const status = document.getElementById("status");
+    try {
+      if (!navigator.clipboard) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(value);
+      status.textContent = "已复制";
+    } catch {
+      try {
+        status.textContent = copyFromField(value, button) ? "已复制" : "复制失败，请手动选取字段文本。";
+      } catch {
+        status.textContent = "复制失败，请手动选取字段文本。";
+      }
+    }
+  });
+</script>
+</body>
+</html>

@@ -10,6 +10,7 @@ description: 根据功能和电气约束选器件或替代料，按精确 C 号�
 | 任务和停点 | 优先入口 |
 | --- | --- |
 | 已知 C 号或完整 MPN，查参数、资料或比较 | 复用已有详情，只补缺少的 `szlcsc_get_part(identifier=…, include_procurement=false)`。当前 `szlcsc_compare_parts` 会取采购数据，用于也要采购对比的任务。默认正文给所需结果、证据和可复制字段。 |
+| 对料号清单批量查技术详情 | 直接执行 [批量精确查料脚本](references/batch-lookup.md)。一次处理整份清单并复用重复料号的查询。按所需结果交付，已有字段先复用。 |
 | 只查库存、采购数量价或装配库 | 分别用 `szlcsc_get_stock`、`szlcsc_get_pricing`（带数量）、`szlcsc_jlcpcb_search`。按所需字段结束。 |
 | 按电气需求选用一颗或多颗器件，或为实际设计找替代 | `szlcsc_select(request=…)`，未识别的硬条件放 `conditions`，续调传回 `previous=selection`。明确需求以外的系列、后缀和封装再用 `szlcsc_discover` 补查。 |
 | 已有 BOM 的资格、封装或供应风险 | 用 `qualify-pcba-sourcing` 按位号追溯资格。本技能提供身份、原厂和渠道证据。仅档案转换或补齐既定件渠道编号时，保留该任务要求的产物。 |

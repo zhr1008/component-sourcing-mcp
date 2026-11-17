@@ -56,6 +56,8 @@ MCP 服务提供实际查询和库文件工具。**`$component-sourcing` Skill �
 
 查已有型号、库存、数量价或资料时，默认直接给出答案。形成设计用 AD 选型清单时，技能用固定模板在本地从已核对的 JSON 生成可逐格复制的 HTML。Excel 按需用同一份数据生成，封装、位号和料号均按文本写入。原始选型响应可先转成待核对的 JSON 底稿。 [确定性导出流程与命令](skills/component-sourcing/references/ad-selection-export.md)
 
+有一份精确 C 号或完整 MPN 清单时，可用技能内的批量查料脚本。它通过现有 Codex stdio `components` 会话复用重复查询，并输出可供后续流程使用的逐项详情及原行索引。 [批量查料用法](skills/component-sourcing/references/batch-lookup.md)
+
 ## Altium 库与投板核对
 
 明确发起「用 `$component-sourcing` 给 `C5291487` 一键下载封装、转换并核对 AD 库」即可。输出按 `完整型号_C号` 命名，例如 `TPR3333-S3TR_C5291487`，含 SchLib、PcbLib、独立 STEP 和核验报告，STEP 同时嵌入 PcbLib。普通选型和查型号继续走查询工具。 [一键流程与核验边界](docs/altium-offline.md)

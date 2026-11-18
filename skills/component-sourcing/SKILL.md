@@ -7,11 +7,13 @@ description: 根据功能和电气约束选器件或替代料，按精确 C 号�
 
 按用户需要的证据和交付物选择能完成任务的最短流程。各层可直接进入，按本层停点交付。使用当前会话实际暴露的 `components` 签名。
 
+配置了本地标准阻容库 JSON 时，先查标准库。库缺失、候选不足或证据有缺口时，用立创 MCP 和网络搜索并行补查。需要交付原理图符号或封装时，再按索引中的库件名查已配置的 IntLib。 [本地库配置与检索细则](references/sourcing-queries.md#标准库优先与外部检索)
+
 | 执行深度 | 用法和停点 |
 | --- | --- |
-| 定向查询 | 已知 C 号或完整 MPN 时先用手头证据，只补缺字段。技术详情用 `szlcsc_get_part(include_procurement=false)`，库存、数量价和装配库分别用 `szlcsc_get_stock`、`szlcsc_get_pricing`、`szlcsc_jlcpcb_search`。给所问字段和来源即可。 |
+| 定向查询 | 已知 C 号或完整 MPN 时先查已配置的标准库和手头证据。需补字段时可用 `szlcsc_get_part(include_procurement=false)` 和网络搜索。库存、数量价和装配库分别用 `szlcsc_get_stock`、`szlcsc_get_pricing`、`szlcsc_jlcpcb_search`。给所问字段和来源即可。 |
 | 批量核对 | 已有料号清单时用 [批量精确查料](references/batch-lookup.md)，按原行去重，续跑用 `--reuse` 只补新增、失败和未查项。只转物料档案或补既定料号时按 `bom-material-archive` 的 CSV 终点。 |
-| 候选筛选与工程选型 | 按功能或规格找候选用 `szlcsc_select`，续调传 `previous=selection`。批量同规格用 [选型条件分组](references/selection-depth.md#批量同条件分组) 先将同条件归为一次查询。候选初筛给匹配与缺口；确定工程选用或替代时核对最终候选并按需要出表。 |
+| 候选筛选与工程选型 | 先按规格筛已配置的标准库。候选或证据有缺口时，用 `szlcsc_select` 与网络搜索补足，MCP 续调传 `previous=selection`。批量同规格用 [选型条件分组](references/selection-depth.md#批量同条件分组) 合并查询。候选初筛给匹配与缺口，确定工程用料时核对最终候选并按需要出表。 |
 | 专项核验 | 器件或 BOM 资格交 `qualify-pcba-sourcing`。要求封装下载、新建库或原厂资料时读 [资料与 AD 资产](references/altium-assets.md)，实际需核的项目另选 [现有库整理](references/altium-existing-library.md) 或 [长期归档与发布](references/archive-and-release.md)。 |
 
 采购阶梯、跨供应商、扩展搜索与错误处理见 [采购与检索细则](references/sourcing-queries.md)。选择边界和重复选型的命令见 [分级流程](references/selection-depth.md)。

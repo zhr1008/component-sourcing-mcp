@@ -10,6 +10,15 @@
 
 ## 精确查询和选型
 
+### 标准库优先与外部检索
+
+标准阻容库由使用者自行配置。将已核对的 UTF-8 JSON 数组放到 Skill 目录下的 `assets/standard-passives/电阻电容标准库-查询索引.json`。已有配套 Altium 集成库时，可另放 `assets/standard-passives/电阻电容标准库.IntLib`。两份文件均为可选的本地资产，开源包仅提供工作流。
+
+- 用 `lcsc_id` 或完整 `mpn` 精确匹配。按规格选型时，用 `group`、`package` 和 `parameters` 筛选。`parameters` 是字段名到原始规格的对象，常用键有 `阻值`、`功率`、`容值`、`额定电压`、`精度` 和 `温度系数`。筛选时换算单位，交付时保留来源格式。满足全部硬条件的候选中优先风华。
+- 库内候选和字段证据足够时，直接交付。已核对的 `comment`、`generic_description`、`description`、`url` 可按同一 C 号复用。库存和价格只作留档，实时采购按 C 号定向查询。需要提供原理图符号或 PCB 封装时，再按 `symbol`、`footprint` 在配套 IntLib 中定位。
+- 索引缺失、不可读或无法覆盖要求时，直接进入外部检索；部分命中时只补缺口。立创 MCP 和网络搜索均可用时并行发起。网络可用公开 C 号、MPN 或电气规格加 `site:item.szlcsc.com` 查国内商品页，也可查厂家资料。用户指定离线、全市场或跨渠道范围时按该范围执行。外搜只传公开料号和必要规格。
+- 立创 MCP 超时、限速或漏项时，继续用网络结果核实。打开实际商品页确认 C 号、MPN、品牌和封装，并用 C 号合并同一商品。电气适用性和资格以原厂资料为依据。缺证据的字段标为待核实。
+
 ### 精确 C 编号
 
 ```text
@@ -40,7 +49,7 @@ szlcsc_find_alternatives(identifier="Cxxxxxx", in_stock_only=false)
 
 ### 功能/参数选型
 
-普通中文需求优先调用 `szlcsc_select`。把用户原话传给 `request`，通过 `conditions` 补充明确但未自动识别的条件。保留返回的 `selection`，后续只改精度、封装或数量时将它传给 `previous`，沿用其他条件。用户给出数量后才查询候选的当前库存和该数量的报价。
+进入立创 MCP 外查后，普通中文需求优先调用 `szlcsc_select`。把公开选型需求传给 `request`，通过 `conditions` 补充明确但未自动识别的条件。保留返回的 `selection`，后续只改精度、封装或数量时将它传给 `previous`，沿用其他条件。用户给出数量后才查询候选的当前库存和该数量的报价。
 
 按 [AD 字段规范](ad-field-rules.md) 核实 `pending_evidence` 和最终候选字段。只有达到文件交付终点才走 [固定导出程序](ad-selection-export.md)。
 

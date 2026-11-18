@@ -1,8 +1,8 @@
 # Component Sourcing MCP
 
-**在 Codex 里用中文查元器件、比较候选，并把选型结果带进 Altium Designer。** 告诉 Codex 需要什么器件、有哪些电气和封装要求，它就能查立创商城并给出最多 5 个候选。每行列出完整订购型号、立创 C 编号、关键参数和来源，以及可直接粘贴到 AD 器件库的 **Comment** 和 **中文 Description**。
+**在 Codex 里用中文查元器件、比较候选，并把选型结果带进 Altium Designer。** 告诉 Codex 器件用途、电气规格和封装要求，通常就能拿到最多 5 个候选。每行列出完整订购型号、立创 C 编号、关键参数和来源，以及可直接粘贴到 AD 器件库的 **Comment** 和 **中文 Description**。
 
-[下载 v0.8.0-rc.7 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.7) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
+[下载 v0.8.0-rc.7 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.7) · [最新版 Skill](skills/component-sourcing/) · [Windows 安装与接入](#windows-安装与接入-codex)
 
 ## 在 Codex 里怎么用
 
@@ -11,6 +11,8 @@
 3. **有数量再询价。** 「按 100 颗报价。」这时才为候选查当前库存、起订量和适用于该数量的价格。商品页只给展示价时，100 颗的单价和总价会标为待核实。
 
 也可以用已知的完整料号查封装、找 Datasheet，或按系列补查不同后缀与引脚数。投板前，按完整订购型号核对厂家 Datasheet 中的电气条件、引脚与封装尺寸。
+
+**有自己的标准阻容库时，选型先查本地 JSON。** 库里没有合适的料或证据不足时，Skill 会并行查立创 MCP 和网络。网络直达立创商品页和厂家资料，也能在 MCP 超时或漏项时补查。也可以直接使用在线查料。 [标准库配置](skills/component-sourcing/references/sourcing-queries.md#标准库优先与外部检索)
 
 ![器件选型架构图。Codex 将中文需求和上轮条件交给立创选型工具，返回最多 5 个候选及 AD 字段。给出采购数量后补查库存与报价。](docs/architecture/component-sourcing-mcp.png)
 
@@ -41,11 +43,13 @@ py -3.12 -m venv .venv
 
 MCP 服务提供实际查询和库文件工具。**`$component-sourcing` Skill 负责选择工具、保留选型条件、判断证据并组织结果。** 将整个 `skills/component-sourcing/` 目录复制到 `~/.agents/skills/` 供各工程使用，或复制到单个工程的 `.agents/skills/`。新开 Codex 对话即可用 `$component-sourcing` 显式调用。MCP 服务需要单独配置。 [Skill 源文件](skills/component-sourcing/SKILL.md) · [Codex Skill 安装位置](https://developers.openai.com/api/reference/cli)
 
+要更新到最新版 Skill，从 `main` 取完整的 `skills/component-sourcing/` 目录。上方预发布包包含打包时的 Skill。更新时保留自己配置的 `assets/standard-passives/`，其中 JSON 用于查料，配套 IntLib 用于提取原理图符号和封装。这些本地库文件由使用者自行准备。 [下载 main 源码 ZIP](https://github.com/zhr1008/component-sourcing-mcp/archive/refs/heads/main.zip)
+
 从旧版升级时，移除安装目录里的旧 `szlcsc` Skill 副本，把提示词里的 `$szlcsc` 换成 `$component-sourcing`。工具仍按 `szlcsc_select`、`szlcsc_get_part` 等原名调用。
 
 | 任务 | MCP 工具与参数 |
 | --- | --- |
-| **中文需求选型** | 先调用 `szlcsc_select(request=…)`，通过 `conditions` 补充未识别的硬条件。只改一项时，将上轮 `selection` 原样传给 `previous`。 |
+| **中文需求选型** | 已配置标准库时先查本地 JSON，缺项时并行查立创和网络。立创用 `szlcsc_select(request=…)`，通过 `conditions` 补充硬条件，只改一项时把上轮 `selection` 传给 `previous`。 |
 | **补找系列或确认精确型号** | 用 `szlcsc_discover` 补查系列和封装，用 `szlcsc_get_part` 按完整型号或 C 编号确认。纯技术查询传 `include_procurement=false`。检查 `coverage` 和待核实项。 |
 | **采购复核** | 明确数量后让 `szlcsc_select` 补充报价，或对既定料号调用 `szlcsc_get_stock` 和 `szlcsc_get_pricing`。区分展示价、适用数量的报价和未知值。 |
 | **装配与跨供应商查询** | 嘉立创装配库用 `szlcsc_jlcpcb_search`。跨供应商先看 `component_providers`，再用 `component_search`、`component_get`、`component_offers`。 |

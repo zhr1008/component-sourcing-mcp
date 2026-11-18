@@ -63,3 +63,17 @@ def test_changes_invalidate_observations(tmp_path):
         review_bundle(tmp_path, [])
     assert exc.value.code == "BUNDLE_CHANGED"
     assert _stem("LM4132AMF-3.3/NOPB", "C123") == "LM4132AMF-3.3_NOPB_C123"
+
+
+def test_incremental_review_preserves_contradictions_and_rebases_report_paths(tmp_path):
+    file = tmp_path / "sample.SchLib"
+    file.write_bytes(b"fixture")
+    data = report() | {"mode": "offline_library", "sha256": {file.name: sha256(b"fixture").hexdigest()}}
+    (tmp_path / "verification.json").write_text(json.dumps(data), encoding="utf-8")
+    wrong = evidence("pins", "pin.1[1].name", "GND")
+    review_bundle(tmp_path, [wrong])
+    merged = review_bundle(tmp_path, [evidence("pads", "pad.1[1].width_mm", 1.02)], retain_existing=True)
+    assert merged["files"][".SchLib"] == str(file)
+    assert merged["review_status"] == "fail" and merged["review"]["pads"]["status"] == "pass"
+    corrected = review_bundle(tmp_path, [evidence("pins", "pin.1[1].name", "VIN")], retain_existing=True)
+    assert corrected["review_status"] == "pending" and corrected["review"]["pads"]["status"] == "pass"

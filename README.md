@@ -2,7 +2,7 @@
 
 **在 Codex 里用中文查元器件、比较候选，并把选型结果带进 Altium Designer。** 告诉 Codex 需要什么器件、有哪些电气和封装要求，它就能查立创商城并给出最多 5 个候选。每行列出完整订购型号、立创 C 编号、关键参数和来源，以及可直接粘贴到 AD 器件库的 **Comment** 和 **中文 Description**。
 
-[下载 v0.8.0-rc.6 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.6) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
+[下载 v0.8.0-rc.7 预发布版](https://github.com/zhr1008/component-sourcing-mcp/releases/tag/v0.8.0-rc.7) · [Windows 安装与接入](#windows-安装与接入-codex) · [Agent 与 Skill](#agent-与-skill)
 
 ## 在 Codex 里怎么用
 
@@ -27,7 +27,7 @@
 
 ## Windows 安装与接入 Codex
 
-安装 Python 3.12，下载 [v0.8.0-rc.6 安装包](https://github.com/zhr1008/component-sourcing-mcp/releases/download/v0.8.0-rc.6/component-sourcing-mcp-v0.8.0-rc.6.zip) 并解压。ZIP 同时包含 MCP 源码和 `$component-sourcing` Skill。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
+安装 Python 3.12，下载 [v0.8.0-rc.7 安装包](https://github.com/zhr1008/component-sourcing-mcp/releases/download/v0.8.0-rc.7/component-sourcing-mcp-v0.8.0-rc.7.zip) 并解压。ZIP 同时包含 MCP 源码和 `$component-sourcing` Skill。打开解压后含有 `pyproject.toml` 的文件夹，在该文件夹打开 PowerShell 并运行以下命令。基础查料也支持 Python 3.11。
 
 ```powershell
 py -3.12 -m venv .venv

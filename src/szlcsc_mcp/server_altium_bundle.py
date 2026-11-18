@@ -29,9 +29,10 @@ def szlcsc_altium_verify_bundle(
     bundle_dir: str,
     expected: Annotated[list[Expected], Field(max_length=5000)],
     orientation: VisualEvidence | None = None,
+    retain_existing: bool = False,
 ) -> str:
-    """核对现成器件包的 observations。expected 填原厂或适用规范的独立期望值及页码/定位；工具与保存时实测值比较并写 verification.json。缺证据按项待核实。只有检查过实际 STEP 几何与原厂 Pin 1 后才提交 orientation。不启动 AD。"""
+    """核对现成器件包的 observations。expected 填原厂或适用规范的独立期望值及页码/定位，结果写入 verification.json。补充核验时传 retain_existing=true，默认按本次全部输入重算。缺证据按项待核实。只有检查过实际 STEP 几何与原厂 Pin 1 后才提交 orientation。不启动 AD。"""
     try:
-        return _json(bundle_summary(review_bundle(bundle_dir, expected, orientation)))
+        return _json(bundle_summary(review_bundle(bundle_dir, expected, orientation, retain_existing=retain_existing)))
     except (OSError, ValueError, KeyError, TypeError) as exc:
         return _json(error_payload(exc, code="ALTIUM_BUNDLE_REVIEW_FAILED"))

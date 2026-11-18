@@ -75,6 +75,8 @@ def test_shortlist_then_change_accuracy_then_quote_through_mcp(monkeypatch, tmp_
                 "package": "=SOT-23", "initial_accuracy": "<=0.2%", "output_voltage": "=3.3V",
             }
             assert result["coverage"]["returned_count"] == 5
+            assert not any(call.args[0].endswith("/product/search") and
+                           call.args[1]["keyword"].startswith("C2") for call in backend._get_json.call_args_list)
             assert result["excluded_by_condition"] == {"初始精度": 1, "封装": 1, "输出电压": 1}
             first_row = result["results"][0]
             assert first_row["lcsc_code"] == "C2001"
@@ -167,3 +169,37 @@ def test_ad_comment_preserves_ordering_suffix_and_description_uses_the_same_mode
     row = selection_row({"part": part, "found_by": [], "requirements": []}, criteria)
     assert row["ad_comment"] == row["mpn"] == part.mpn
     assert row["ad_description"] == "电压基准/输出电压3.3V/LM4132AMF-3.3/NOPB/重要参数待核实/SOT-23-5/C181258/TI"
+
+
+@pytest.mark.parametrize("token, expected", [("10K", "10KΩ"), ("2m", "2mΩ"), ("1M", "1MΩ")])
+def test_passive_requirements_in_chinese_shorthand(token, expected):
+    criteria, _ = selection_criteria(f"选{token}电阻，0603，100mW，1%")
+    assert criteria.constraints == {"resistance": "=" + expected, "package": "=0603",
+                                    "power": ">=100mW", "tolerance": "<=1%"}
+    updated, _ = selection_criteria("额定功率至少1/4W", criteria)
+    assert updated.constraints == criteria.constraints | {"power": ">=1/4W"}
+
+
+def test_regulator_range_and_passive_ad_fields():
+    criteria, _ = selection_criteria("找一颗LDO，输入3V~5V，输出1.8V")
+    assert criteria.constraints == {"input_voltage_min": "<=3V", "input_voltage_max": ">=5V", "output_voltage": "=1.8V"}
+    for query, params, comment, source_value in (
+        ("贴片电阻", {"阻值": "4.7kΩ", "功率": "100mW"}, "4.7K", "4.7kΩ"),
+        ("贴片电容", {"容值": "1µF", "耐压": "50V"}, "1uF/50V", "1uF"),
+        ("电感", {"电感量": "6.8µH"}, "6.8µH", "6.8µH"),
+    ):
+        part = Part(lcsc_code="C123", mpn="FIXTURE", brand="FH(风华)", package="0603", parameters=params)
+        row = selection_row({"part": part, "requirements": [], "found_by": []}, selection_criteria(query)[0])
+        assert row["ad_comment"] == comment
+        assert row["generic_description"].split("/")[1] == source_value
+        fields = row["specific_description"].split("/")
+        assert len(fields) == 7 and fields[2] == "FIXTURE" and fields[-3:] == ["0603", "C123", "FH(风华)"]
+
+
+def test_brand_preference_is_carried_separately_from_hard_filters():
+    criteria, _ = selection_criteria("10K电阻优先风华")
+    assert criteria.preferred_brand == "风华" and "brand" not in criteria.constraints
+    updated, _ = selection_criteria("功率250mW", criteria)
+    assert updated.preferred_brand == "风华"
+    cleared, _ = selection_criteria("品牌不限", updated)
+    assert cleared.preferred_brand is None and cleared.constraints == updated.constraints

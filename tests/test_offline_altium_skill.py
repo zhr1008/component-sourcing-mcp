@@ -36,6 +36,27 @@ def test_lists_project_documents_even_if_the_members_are_missing(tmp_path):
     assert result["truncated"] is True
 
 
+def test_intlib_lookup_preserves_exact_fields_and_footprint_reference(tmp_path):
+    altium = pytest.importorskip("altium_monkey")
+    sch, pcb, packed = (tmp_path / f"Fixture.{ext}" for ext in ("SchLib", "PcbLib", "IntLib"))
+    symbols = altium.AltiumSchLib()
+    for name in ("R_10K", "R_100K"):
+        row = symbols.add_symbol(name)
+        row.add_parameter("Resistance", name[2:])
+        row.add_footprint("TEST0603", library_name=pcb.name)
+    symbols.save(sch)
+    footprints = altium.AltiumPcbLib()
+    fp = footprints.add_footprint("TEST0603")
+    fp.add_pad(designator="1", position_mils=(0, 0), width_mils=15, height_mils=15)
+    footprints.save(pcb)
+    altium.AltiumIntLib.create_from_libraries(packed, schlib_paths=[sch], pcblib_paths=[pcb])
+    assert read_saved(packed, "--limit", "1")["truncated"]
+    result = read_saved(packed, "--component", "r_100k")
+    assert result["component_count"] == 2 and result["matched_count"] == 1
+    item, = result["components"]
+    assert item["footprints"] == ["TEST0603"] and {"name": "Resistance", "value": "100K"} in item["parameters"]
+
+
 @pytest.mark.parametrize("kind", ["schdoc", "pcbdoc"])
 def test_reads_saved_component_by_designator(tmp_path, kind):
     altium = pytest.importorskip("altium_monkey")

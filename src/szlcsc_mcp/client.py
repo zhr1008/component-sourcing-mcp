@@ -382,18 +382,20 @@ class SZLCSCClient:
         # Resolve identity before expensive category/price enrichment. A lookup
         # should not fetch twenty unrelated category pages before choosing a part.
         candidates = SearchResults()
+        ident = identifier.casefold()
+        is_code = re.fullmatch(r"c\d+", ident) is not None
         for page in range(1, 4):
             window = self.search(identifier, max_results=50, enrich=False, page=page)
+            if is_code:
+                for part in window:
+                    if (part.lcsc_code or "").casefold() == ident:
+                        return part
             candidates.extend(window)
             meta = getattr(window, "coverage", {})
             has_more = meta.get("has_more")
             if has_more is False or (has_more is None and meta.get("raw_count", len(window)) < self.SEARCH_PAGE_SIZE):
                 break
-        ident = identifier.casefold()
-        code_matches = [p for p in candidates if (p.lcsc_code or "").casefold() == ident]
-        if code_matches:
-            return code_matches[0]
-        if re.fullmatch(r"c\d+", ident):
+        if is_code:
             return None
         exact = [
             p
@@ -428,7 +430,22 @@ class SZLCSCClient:
             except SZLCSCError as exc:
                 part.warnings.append(f"Category price/stock enrichment failed: {exc.code}")
 
-        if include_static and part.product_sign_id:
+        if include_static:
+            self._enrich_static(part)
+
+        if not include_procurement:
+            unknown_procurement(part)
+        elif part.product_url:
+            try:
+                self._enrich_from_html(part)
+            except SZLCSCError as exc:
+                unknown_procurement(part, exc.code)
+        else:
+            unknown_procurement(part, "PRODUCT_PAGE_MISSING")
+        return part
+
+    def _enrich_static(self, part: Part) -> str | None:
+        if part.product_sign_id:
             try:
                 detail = self._get_json(
                     f"{self.ITEM_HOST}/phone/p/{part.product_sign_id}", ttl=86400
@@ -443,19 +460,8 @@ class SZLCSCClient:
                     self._extract_detail_attachments(part, detail)
             except SZLCSCError as exc:
                 part.warnings.append(f"Detail enrichment failed: {exc.code}")
-
-        # Procurement must be refreshed even for focused stock/price tools.
-        if not include_procurement:
-            unknown_procurement(part)
-            return part
-        if part.product_url:
-            try:
-                self._enrich_from_html(part)
-            except SZLCSCError as exc:
-                unknown_procurement(part, exc.code)
-        else:
-            unknown_procurement(part, "PRODUCT_PAGE_MISSING")
-        return part
+                return exc.code
+        return None
 
     @staticmethod
     def _walk(obj: Any):

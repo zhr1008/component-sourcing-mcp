@@ -90,7 +90,16 @@ def parse_number(text: Any) -> ParsedNumber | None:
         return ParsedNumber(value, None) if math.isfinite(value) else None
     if text is None:
         return None
-    s = str(text).strip().replace(",", "")
+    s = str(text).strip()
+    if "," in s:
+        if not re.fullmatch(r"(?:±|\+/-)?\s*[-+]?\d{1,3}(?:,\d{3})+(?![\d,])[^,]*", s):
+            return None
+        s = s.replace(",", "")
+    watt_fraction = re.fullmatch(r"(\d+)\s*/\s*(\d+)\s*[wW]", s)
+    if watt_fraction:
+        divisor = float(watt_fraction[2])
+        watts = float(watt_fraction[1]) / divisor if divisor else math.nan
+        return ParsedNumber(watts, "w") if math.isfinite(watts) else None
     # Only a complete scalar is numeric. Digits inside package names and ranges
     # must never become evidence of an electrical or package match.
     m = _SCALAR.fullmatch(s)
@@ -105,7 +114,7 @@ def parse_number(text: Any) -> ParsedNumber | None:
 def parse_number_range(text: Any) -> list[ParsedNumber]:
     if text is None:
         return []
-    s = str(text).strip().replace(",", "")
+    s = str(text).strip()
     # Split common distributor range notations while preserving units on each side.
     parts = re.split(r"\s*(?:~|～|至|to)\s*", s, flags=re.I)
     if len(parts) != 2:
@@ -137,6 +146,8 @@ def _normalize_key(s: str) -> str:
 
 
 def find_parameter(part: Part, name: str, *, exact_label: bool = False) -> tuple[str | None, Any]:
+    if name.casefold() == "brand":
+        return "brand", part.brand
     if name.casefold() == "package":
         return "package", part.package
     wanted = [name]
@@ -148,6 +159,13 @@ def find_parameter(part: Part, name: str, *, exact_label: bool = False) -> tuple
         hit = normalized.get(_normalize_key(candidate))
         if hit:
             return hit
+    names = {_normalize_key(candidate) for candidate in wanted}
+    for label, value in part.parameters.items():
+        heading = re.fullmatch(r"(.*?)[（(]([^()（）]+)[)）]", str(label))
+        if heading and _normalize_key(heading[1]) in names:
+            unit = parse_number("1" + heading[2])
+            if unit and unit.unit:
+                return str(label), value
     if exact_label:
         return None, None
     # Fuzzy fallback: an alias contained in a longer SZLCSC parameter label.
@@ -220,7 +238,7 @@ def match_constraint(part: Part, key: str, expression: str, *, exact_label: bool
     numeric = parse_number(expected)
     if numeric is not None and key.casefold() != "package":
         measured = parse_number(actual)
-        if exact_label and key.casefold() == "supply_voltage" and op in {"=", "=="}:
+        if exact_label and key.casefold() in {"supply_voltage", "input_voltage"} and op in {"=", "=="}:
             bounds = parse_number_range(actual)
             if bounds and all(bound.unit == numeric.unit for bound in bounds):
                 return {"key": key, "label": label, "expected": expression, "actual": actual,

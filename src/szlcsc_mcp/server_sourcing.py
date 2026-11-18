@@ -107,6 +107,7 @@ def szlcsc_select(
     catalog_query: Query | None = None,
     quantity: Quantity | None = None,
     refresh: bool = False,
+    preferred_brand: Annotated[ConstraintText, Field(max_length=40, description="证据相当时优先的品牌，保留其他品牌")] | None = None,
 ) -> dict:
     """中文器件选型首选入口。最多 5 个候选，每项提供型号、立创料号、关键参数、证据和 AD Comment/Description。
 
@@ -117,6 +118,7 @@ def szlcsc_select(
     try:
         criteria, notes = selection_criteria(
             request, previous, conditions=conditions, catalog_query=catalog_query, quantity=quantity,
+            preferred_brand=preferred_brand,
         )
         result = shortlist(client, criteria, refresh=refresh)
     except SourcingError as exc:

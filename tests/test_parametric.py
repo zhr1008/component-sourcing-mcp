@@ -45,3 +45,12 @@ def test_explicit_voltage_bound_with_unit_suffix_remains_usable():
         "input_voltage_min": "<=3V", "input_voltage_max": ">=5V",
     })
     assert report["all_matched"]
+
+
+def test_dimensioned_headings_and_fractional_power():
+    part = Part(brand="FH(风华)", parameters={"阻值(kΩ)": "10", "额定功率": "1/4W", "精度": "±1%"})
+    assert evaluate_constraints(part, {"resistance": "=10000Ω", "power": ">=250mW",
+                                       "tolerance": "<=1%", "brand": "=FH"}, exact_labels=True)["all_matched"]
+    assert not evaluate_constraints(part, {"power": ">=0.3W"}, exact_labels=True)["all_matched"]
+    assert parse_number("1/0W") is None and parse_number("1,2V") is None
+    assert parse_number("1,200mV").value == pytest.approx(1.2)

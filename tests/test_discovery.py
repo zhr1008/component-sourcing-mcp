@@ -113,6 +113,37 @@ def test_real_thirty_row_page_is_not_treated_as_exhausted_fifty_row_request(tmp_
         client.close()
 
 
+def test_partial_access_limit_keeps_candidates_without_more_detail_requests(tmp_path):
+    client = client_for(tmp_path, {})
+    cached = Part(lcsc_code="C123", mpn="ISO1042A", stock=99)
+    client.search = Mock(side_effect=[[cached], SZLCSCError("limit", code="RATE_LIMITED")])
+    try:
+        result = client.discover("ISO1042", family_queries=["ISO1042A"])
+        assert result["coverage"]["stopped_on_access_limit"] and result["count"] == 1
+        assert result["results"][0]["part"].stock is None
+        client.get_part.assert_not_called()
+    finally:
+        client.close()
+
+
+def test_exact_code_stops_early_while_mpn_checks_later_pages(tmp_path):
+    from szlcsc_mcp.client import SearchResults
+
+    client = client_for(tmp_path, {})
+    first = SearchResults([Part(lcsc_code="C123", mpn="PART10")], coverage={"has_more": True})
+    second = SearchResults([Part(lcsc_code="C456", mpn="PART10")], coverage={"has_more": False})
+    try:
+        client.search = Mock(side_effect=[first])
+        assert client._find_exact("c123").lcsc_code == "C123"
+        assert client.search.call_count == 1
+        client.search = Mock(side_effect=[first, second])
+        with pytest.raises(SZLCSCError) as exc:
+            client._find_exact("PART10")
+        assert exc.value.code == "AMBIGUOUS_PART" and client.search.call_count == 2
+    finally:
+        client.close()
+
+
 def paged_client(tmp_path):
     client = client_for(tmp_path, {})
     rows = [{"code": f"C{i}", "model": f"PART{i:03}", "name": "catalog part"} for i in range(60)]

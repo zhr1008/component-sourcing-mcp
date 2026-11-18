@@ -51,6 +51,8 @@ python -X utf8 scripts/inspect_saved.py path/to/Board.PcbDoc --designator U1
 4. 核对引脚编号与定义、焊盘编号和几何、孔径、阻焊／锡膏模式及机械层用途。符号电气类型（例如默认 Passive）仅作提示。同一板的实际开窗按适用规则确定。只有看过实际 STEP 几何并与原厂图对照 Pin 1、贴板方向后才填写 `orientation`。转换器的 placement 告警也需保留。提供了目标板时，按板厂或工程规范对照已保存的物理层叠和规则。
 5. 交付库文件和 `verification.json`。将 `generated` 与核验结论分开报告，分别列出已通过、不符合、待核实和提示。默认全程用离线 CAD 工具，生成资产时联网下载。任务缺少证据时继续保留待核实。只有用户另行明确要求 AD 原生 ERC／DRC、活动文档或 ECO 时才进入 AD 桥接。
 
+后续补充证据时传 `retain_existing=true`，同一字段的新证据覆盖旧值；默认调用按本次提交的整组证据重新核验。
+
 ### 单独下载、转换或诊断
 
 需要 EasyEDA 资产：

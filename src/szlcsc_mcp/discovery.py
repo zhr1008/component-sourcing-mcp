@@ -79,7 +79,7 @@ def requirement_report(client, part, query: str) -> list[dict]:
 def discover(client, query, *, max_results=10, family_queries=None, constraints=None,
              package=None, brand=None, in_stock=None, max_price=None, max_queries=6,
              pages_per_query=2, refresh=False, enrich=True, include_procurement=True,
-             detail_budget=50, exact_labels=False):
+             detail_budget=50, exact_labels=False, preferred_brand=None):
     if (not isinstance(query, str) or not query.strip() or len(query) > 200
             or type(max_results) is not int or not 1 <= max_results <= 50
             or type(max_queries) is not int or not 1 <= max_queries <= 8
@@ -163,8 +163,9 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
             failed = sum(not item["matched"] and item["reason"] not in {"missing", "not_numeric", "unit_unknown"}
                          and not item["reason"].startswith("unit_mismatch:")
                          for item in evidence["details"])
+            brand_matches = preferred_brand and preferred_brand.casefold() in (row["part"].brand or "").casefold()
             return (failed + contradicted, not evidence["all_matched"], -evidence["matched"],
-                    unsupported, -int(automotive_claim), -row["relevance"]["score"], row["part"].mpn or "")
+                    unsupported, -int(automotive_claim), not brand_matches, -row["relevance"]["score"], row["part"].mpn or "")
 
         ranked = sorted(candidates.values(), key=rank)
         # Cover package/pin variants before spending all detail calls on one package.
@@ -189,12 +190,25 @@ def discover(client, query, *, max_results=10, family_queries=None, constraints=
             if detail_count >= detail_budget:
                 break
             detail_count += 1
-            if enrich and part.lcsc_code:
+            if coverage.get("stopped_on_access_limit"):
+                unknown_procurement(part, errors[-1]["code"])
+            elif enrich and not include_procurement and part.lcsc_code and part.mpn and part.product_sign_id:
+                code = client._enrich_static(part)
+                if code in {"ACCESS_DENIED", "RATE_LIMITED"}:
+                    errors.append({"query": part.lcsc_code, "stage": "detail", "code": code})
+                    coverage["stopped_on_access_limit"] = True
+                unknown_procurement(part)
+            elif enrich and part.lcsc_code:
                 try:
                     part = (client.get_part(part.lcsc_code) if include_procurement else
                             client.get_part(part.lcsc_code, include_procurement=False))
                 except SourcingError as exc:
                     unknown_procurement(part, exc.code)
+                    if exc.code in {"ACCESS_DENIED", "RATE_LIMITED"}:
+                        errors.append({"query": part.lcsc_code, "stage": "detail", "code": exc.code})
+                        coverage["stopped_on_access_limit"] = True
+            elif not include_procurement:
+                unknown_procurement(part)
             if not client._matches_filters(part, package=package, brand=brand,
                                            in_stock=in_stock, max_price=max_price):
                 unknown = ((in_stock is not None and part.in_stock is None)

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections import Counter
+from contextlib import contextmanager
 from hashlib import file_digest, sha256
 import json
 import math
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -40,7 +42,7 @@ class Expected(BaseModel):
 
 
 class VisualEvidence(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     reference: Annotated[str, Field(min_length=1, max_length=500)]
     page: Annotated[int, Field(ge=1)]
@@ -200,6 +202,8 @@ def _review(report, expected, orientation):
             advisory = group == "pins" and field.endswith(".electrical_type")
             if item is None or actual is None or actual == []:
                 rows[field] = {"status": "not_reviewed" if advisory else "pending", "actual": actual}
+                if item is not None:
+                    rows[field]["evidence"] = item.model_dump()
                 continue
             value = item.value
             numeric = type(actual) in (float, int) and type(value) in (float, int)
@@ -209,6 +213,8 @@ def _review(report, expected, orientation):
             rows[field] = {"status": status, "actual": actual,
                            "evidence": item.model_dump()}
         if group == "orientation_3d":
+            if not facts:
+                rows["model_pose"] = {"status": "pending", "reason": "缺少从库内读回的 3D 姿态"}
             rows["pin1_alignment"] = {"status": "pending"} if orientation is None else {
                 "status": "pass" if orientation.matches else "fail", "method": "reviewer",
                 "evidence": orientation.model_dump(),
@@ -295,8 +301,32 @@ def build_bundle(client, eda, code, output_root, target_board=None, datasheet_ur
     return report
 
 
-def review_bundle(bundle_dir, expected, orientation=None):
+@contextmanager
+def _review_lock(folder):
+    # Hold a stable sidecar across the read/check/atomic replace; process exit releases it.
+    with (folder / ".verification.lock").open("a+b") as lock:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise SourcingError("器件包正在核验，请稍后重试", code="BUNDLE_BUSY", retryable=True) from exc
+        yield
+
+
+def review_bundle(bundle_dir, expected, orientation=None, *, retain_existing=False):
     folder = Path(bundle_dir).expanduser().resolve()
+    if not (folder / REPORT).is_file():
+        raise SourcingError("缺少器件包核验报告", code="INVALID_ARGUMENT")
+    with _review_lock(folder):
+        return _review_saved(folder, expected, orientation, retain_existing)
+
+
+def _review_saved(folder, expected, orientation, retain_existing):
     report = json.loads((folder / REPORT).read_text(encoding="utf-8"))
     if report.get("mode") != "offline_library" or not report.get("sha256"):
         raise SourcingError("目录不是一键流程生成的器件包", code="INVALID_ARGUMENT")
@@ -305,8 +335,26 @@ def review_bundle(bundle_dir, expected, orientation=None):
         if (Path(name).name != name or file.resolve().parent != folder
                 or not file.is_file() or _digest(file) != digest):
             raise SourcingError("产物已变更，原核验观察失效", code="BUNDLE_CHANGED")
-    if report.get("target_board_sha256") and _digest(Path(report["target_board"])) != report["target_board_sha256"]:
-        raise SourcingError("目标板文件已变更，层叠和规则观察失效", code="BUNDLE_CHANGED")
+    if report.get("target_board_sha256"):
+        board = Path(report["target_board"])
+        if not board.is_file() or _digest(board) != report["target_board_sha256"]:
+            raise SourcingError("目标板文件已变更，层叠和规则观察失效", code="BUNDLE_CHANGED")
+    if retain_existing:
+        updated = {(item.group, item.field) for item in expected}
+        expected = list(expected)
+        for group, detail in report.get("review", {}).items():
+            for field, row in detail["checks"].items():
+                saved = row.get("evidence")
+                if saved is None:
+                    continue
+                if group == "orientation_3d" and field == "pin1_alignment":
+                    if orientation is None:
+                        orientation = VisualEvidence.model_validate(saved)
+                elif (group, field) not in updated:
+                    expected.append(Expected.model_validate(saved))
+    report["bundle_dir"] = str(folder)
+    report["report_path"] = str(folder / REPORT)
+    report["files"] = {Path(name).suffix: str(folder / name) for name in report["sha256"]}
     _review(report, expected, orientation)
     _write_report(folder, report)
     return report

@@ -17,9 +17,9 @@ TYPES = (
     ("电压基准", r"电压基准|基准电压|基准源|voltage\s+reference", "电压基准", "voltage reference"),
     ("CAN收发器", r"(?<![A-Za-z0-9])CAN(?:[- ]?FD)?(?:\s*(?:总线|收发器|transceiver))?(?![A-Za-z0-9])", "CAN收发器", "CAN transceiver"),
     ("RS485收发器", r"RS[- ]?485(?:\s*(?:收发器|transceiver))?|485\s*收发器", "RS485收发器", "RS485 transceiver"),
-    ("线性稳压器", r"\bLDO\b|线性稳压器?|低压差稳压器?", "LDO", "线性稳压器"),
+    ("线性稳压器", r"(?<![A-Za-z0-9])LDO(?![A-Za-z0-9])|线性稳压器?|低压差稳压器?", "LDO", "线性稳压器"),
     ("运算放大器", r"运算放大器|运放|op[- ]?amp", "运算放大器", "operational amplifier"),
-    ("微控制器", r"微控制器|单片机|\bMCU\b", "微控制器", "MCU"),
+    ("微控制器", r"微控制器|单片机|(?<![A-Za-z0-9])MCU(?![A-Za-z0-9])", "微控制器", "MCU"),
     ("MOS管", r"MOSFET|MOS\s*管|场效应管", "MOSFET", "场效应管"),
     ("钽电容", r"钽电容|tantalum\s+capacitor", "钽电容", "tantalum capacitor"),
     ("电解电容", r"铝电解电容|电解电容|electrolytic\s+capacitor", "电解电容", "electrolytic capacitor"),
@@ -47,6 +47,7 @@ _V = r"(?:[kmunµμ]?V)(?![a-z])"
 _CAPACITANCE = r"[pnuµμm]?F(?![a-z])"
 _ISOLATION = re.compile(r"非隔离|non[- ]?isolat|隔离(?!(?:耐压|电压))|isolated", re.I)
 _CONDITION_NAMES = {
+    "brand": "品牌",
     "output_voltage": "输出电压", "input_voltage_min": "输入下限", "input_voltage_max": "输入上限",
     "initial_accuracy": "初始精度", "accuracy": "精度", "tolerance": "容差", "tempco": "温漂",
     "output_current": "输出电流", "isolation_voltage": "隔离耐压", "voltage_rating": "耐压",
@@ -69,6 +70,7 @@ class SelectionCriteria(BaseModel):
 
     catalog_query: Query
     component_type: _NAME = "电子器件"
+    preferred_brand: _NAME | None = None
     constraints: Annotated[dict[ConstraintText, ConstraintText], Field(max_length=30)] = Field(default_factory=dict)
     quantity: Quantity | None = None
 
@@ -84,10 +86,10 @@ def _quantity(request: str) -> int | None:
     return None
 
 
-def _numeric_filter(request, names, units, default="=", *, required_label=True):
-    label = rf"(?:{names})" if required_label else rf"(?:(?:{names})\s*)?"
+def _numeric_filter(request, names, units, default="=", *, required_label=True, number=_NUMBER):
+    label = rf"(?:{names})" if required_label else rf"(?<![A-Za-z0-9.])(?:(?:{names})\s*)?"
     pattern = rf"{label}\s*(?:可以|可|能)?\s*(?:改成|改为|放宽到|放宽至|调整为|为|[:：])?\s*(?P<op>{_OP}|至少|不低于|不超过|至多|以内)?\s*"
-    match = re.search(pattern + rf"\s*±?\s*(?P<value>{_NUMBER}\s*(?:{units}))", request, re.I)
+    match = re.search(pattern + rf"\s*±?\s*(?P<value>{number}\s*(?:{units}))", request, re.I)
     if match is None:
         return None
     op = {"≤": "<=", "≥": ">=", "≠": "!=", "至少": ">=", "不低于": ">=", "不超过": "<=",
@@ -118,7 +120,7 @@ def _filters(request: str, kind: str, previous: SelectionCriteria | None) -> dic
         if not initial and previous is not None:
             initial = "initial_accuracy" in previous.constraints and "accuracy" not in previous.constraints
         filters["tolerance" if passive else ("initial_accuracy" if initial else "accuracy")] = accuracy
-    elif passive and (tolerance := re.search(rf"±\s*({_NUMBER})\s*[%％]", request)):
+    elif passive and (tolerance := re.search(rf"(?:±\s*|(?:^|[\s,，、;；]))({_NUMBER})\s*[%％]", request)):
         filters["tolerance"] = "<=" + tolerance[1] + "%"
     for key, names, units, default in (
         ("input_voltage_min", r"最低输入(?:电压)?|输入下限|最小输入电压", _V, "<="),
@@ -136,6 +138,17 @@ def _filters(request: str, kind: str, previous: SelectionCriteria | None) -> dic
         value = _numeric_filter(source, names, units, default)
         if value:
             filters[key] = value
+    if kind in {"线性稳压器", "电压基准"}:
+        vin = re.search(rf"(?:输入(?:电压)?|Vin)\s*[:：]?\s*({_NUMBER})\s*({_V})?\s*[~～至]\s*({_NUMBER})\s*({_V})", request, re.I)
+        if vin:
+            filters["input_voltage_min"] = "<=" + vin[1] + (vin[2] or vin[4])
+            filters["input_voltage_max"] = ">=" + vin[3] + vin[4]
+        elif value := _numeric_filter(request, r"(?<!最低)(?<!最高)(?<!最小)(?<!最大)(?:输入(?:电压)?|Vin)", _V):
+            filters["input_voltage"] = value
+    if kind == "贴片电阻":
+        if value := _numeric_filter(request, "额定功率|功率|rated power", r"[munµμ]?W(?![a-z])",
+                                    ">=", required_label=False, number=rf"(?:\d+\s*/\s*\d+|{_NUMBER})"):
+            filters["power"] = value
     if "supply_voltage" not in filters:
         source = re.search(rf"(?<![A-Za-z0-9.])({_NUMBER}\s*{_V})\s*供电", request, re.I)
         if source:
@@ -153,13 +166,13 @@ def _filters(request: str, kind: str, previous: SelectionCriteria | None) -> dic
             filters["output_voltage"] = "=" + re.sub(r"\s+", "", voltages[0])
     for key, names, units in (
         ("capacitance", r"容值|电容量", _CAPACITANCE),
-        ("resistance", r"阻值|电阻值", r"[mMkK]?(?:Ω|ohms?|欧姆)(?![a-z])|[kKM](?![\w.])"),
+        ("resistance", r"阻值|电阻值", r"[mMkK]?(?:Ω|ohms?|欧姆)(?![a-z])|[kKmM](?![A-Za-z0-9.])"),
         ("inductance", r"电感量", r"[nuµμm]?H(?![a-z])"),
     ):
         implicit = (key == "capacitance" and capacitor or key == "resistance" and kind == "贴片电阻"
                     or key == "inductance" and kind == "电感")
         if value := _numeric_filter(request, names, units, required_label=not implicit):
-            if key == "resistance" and re.search(r"[kKM]$", value):
+            if key == "resistance" and re.search(r"[kKmM]$", value):
                 value += "Ω"
             if key == "resistance":
                 value = value.replace("欧姆", "Ω")
@@ -169,7 +182,8 @@ def _filters(request: str, kind: str, previous: SelectionCriteria | None) -> dic
 
 def selection_criteria(request: str, previous: SelectionCriteria | None = None, *,
                        catalog_query: str | None = None, quantity: int | None = None,
-                       conditions: dict[str, str | None] | None = None) -> tuple[SelectionCriteria, list[str]]:
+                       conditions: dict[str, str | None] | None = None,
+                       preferred_brand: str | None = None) -> tuple[SelectionCriteria, list[str]]:
     known_kind = next((name for name, pattern, *_ in TYPES if re.search(pattern, request, re.I)), None)
     if not previous and known_kind is None and re.search(rf"{_NUMBER}\s*[pnuµμm]F(?![a-z])", request, re.I):
         known_kind = "贴片电容"
@@ -187,8 +201,16 @@ def selection_criteria(request: str, previous: SelectionCriteria | None = None, 
     else:
         raise SourcingError("请提供器件类目或完整型号。也可通过 catalog_query 提供简短的目录检索词。", code="CATEGORY_REQUIRED")
     parsed = _filters(request, kind, previous)
+    if preferred_brand is None:
+        preferred_brand = previous.preferred_brand if previous else None
+        if re.search(r"(?:风华(?:高科)?|FH)优先|优先(?:选用|使用|采用)?(?:风华(?:高科)?|FH)", request, re.I):
+            preferred_brand = "风华"
+        elif re.search(r"品牌不限|不限品牌|取消品牌(?:偏好|优先)", request):
+            preferred_brand = None
     filters = dict(previous.constraints) if previous else {}
     filters.update(parsed)
+    if re.search(r"品牌不限|不限品牌", request):
+        filters.pop("brand", None)
     if re.search(r"封装不限|不限封装|取消封装限制", request):
         filters.pop("package", None)
     isolation = _ISOLATION.search(request) if kind == "CAN收发器" else None
@@ -211,7 +233,7 @@ def selection_criteria(request: str, previous: SelectionCriteria | None = None, 
     new_quantity = count
     if count is None and previous and not clear_quantity:
         count = previous.quantity
-    if (previous and filters == previous.constraints and query == previous.catalog_query
+    if (previous and filters == previous.constraints and query == previous.catalog_query and preferred_brand == previous.preferred_brand
             and not parsed and not conditions and not catalog_query and new_quantity is None and not clear_quantity):
         raise SourcingError("未识别到本轮改动，请说出条件和值，或用 conditions 更新选型条件", code="REFINEMENT_REQUIRED")
 
@@ -226,7 +248,8 @@ def selection_criteria(request: str, previous: SelectionCriteria | None = None, 
         notes.append("请通过 conditions 补充未列入选型条件的硬性指标。")
     if len(filters) > 30:
         raise SourcingError("选型条件最多支持 30 项", code="INVALID_ARGUMENT")
-    return SelectionCriteria(catalog_query=query, component_type=kind, constraints=filters, quantity=count), notes
+    return SelectionCriteria(catalog_query=query, component_type=kind, preferred_brand=preferred_brand,
+                             constraints=filters, quantity=count), notes
 
 
 def _status(detail: dict) -> str:
@@ -241,8 +264,8 @@ def _status(detail: dict) -> str:
 def _text(value: Any) -> str:
     if not isinstance(value, (str, int, float)) or isinstance(value, bool):
         return "待核实"
-    value = re.sub(r"\s+", " ", str(value).strip()).replace("/", "／")
-    return value[:80] if value and value.casefold() not in {"-", "--", "—", "n/a", "null"} else "待核实"
+    value = str(value).strip()
+    return value if value and value.casefold() not in {"-", "--", "—", "n/a", "null"} else "待核实"
 
 
 def _parameter(part: Part, key: str) -> str:
@@ -286,7 +309,11 @@ def _ad_fields(part: Part, kind: str, specs: dict[str, str], mpn: str) -> tuple[
         return f"{capacitance}/{voltage}", "/".join((kind, capacitance, voltage, tolerance, grade, pack))
     if kind == "贴片电阻":
         resistance = specs.get("resistance", "待核实")
-        return resistance, "/".join((kind, resistance, specs.get("power", "待核实"),
+        match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([mMkK]?)\s*(?:Ω|(?i:ohms?)|欧姆)", resistance)
+        comment = resistance
+        if match:
+            comment = match[1] + {"m": "m", "M": "M", "k": "K", "K": "K", "": "Ω"}[match[2]]
+        return comment, "/".join((kind, resistance, specs.get("power", "待核实"),
                                      specs.get("tolerance", "待核实"), specs.get("operating_grade", "待核实"), pack))
     comment = specs.get("inductance", "待核实") if kind == "电感" else mpn
     values = [f"{_CONDITION_NAMES.get(key, key)}{value}" for key, value in specs.items() if value != "待核实"]
@@ -303,7 +330,7 @@ def selection_row(row: dict, criteria: SelectionCriteria) -> dict:
               for item in support["details"]]
     specs = {}
     for item in checks:
-        if item["key"] not in {"package", "qualification"} and item["status"] == "matched":
+        if item["key"] not in {"package", "brand", "qualification"} and item["status"] == "matched":
             specs[item["key"]] = _display_parameter(item["key"], item["label"], item["actual"])
     default_specs = {
         "电压基准": ("output_voltage", "initial_accuracy", "accuracy", "tempco"),
@@ -325,11 +352,24 @@ def selection_row(row: dict, criteria: SelectionCriteria) -> dict:
     for key in default_specs.get(kind, ()):
         if key not in specs:
             specs[key] = _parameter(part, key)
+    if kind.endswith("电容"):
+        specs["capacitance"] = re.sub(r"[μµ]F", "uF", specs.get("capacitance", "待核实"))
     mpn = _ordering_code(part)
     comment, description = _ad_fields(part, kind, specs, mpn)
+    generic = ""
+    specific = description
+    if kind.endswith("电容") or kind in {"贴片电阻", "电感"}:
+        main_key = "capacitance" if kind.endswith("电容") else "resistance" if kind == "贴片电阻" else "inductance"
+        others = [f"{_CONDITION_NAMES.get(key, key)}{value}" for key, value in specs.items()
+                  if key != main_key and value != "待核实"]
+        generic = description if kind != "电感" else "/".join((
+            kind, comment, specs["current_rating"], specs["tolerance"], _text(part.package)))
+        specific = "/".join((kind, specs[main_key], mpn, "、".join(others) or "待核实",
+                             _text(part.package), _text(part.lcsc_code), _text(part.brand)))
     return {"mpn": mpn, "lcsc_code": part.lcsc_code, "brand": part.brand, "package": part.package,
             "component_type": kind, "parameters": specs,
             "ad_comment": comment, "ad_description": description,
+            "generic_description": generic, "specific_description": specific,
             "match_status": ("pending_evidence" if any(c["status"] == "unknown" for c in checks)
                              or any(c["status"] == "unknown" for c in row["requirements"])
                              else ("catalog_match" if checks else "candidate")),
@@ -353,7 +393,8 @@ def shortlist(client, criteria: SelectionCriteria, *, refresh: bool = False) -> 
             primary = " ".join([*values, primary])
     result = client.discover(primary, max_results=20, detail_budget=20, max_queries=6,
                              family_queries=aliases, constraints=criteria.constraints or None,
-                             include_procurement=False, exact_labels=True, refresh=refresh)
+                             include_procurement=False, exact_labels=True, refresh=refresh,
+                             preferred_brand=criteria.preferred_brand)
     if not result.get("ok", True):
         return {**result, "selection": criteria.model_dump()}
     rows = []
